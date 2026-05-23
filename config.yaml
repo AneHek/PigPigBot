@@ -30,70 +30,14 @@ redis:
   password: ""
   db: 0
 
-# 宠物游戏配置
+# 宠物战斗游戏配置
 game:
-  # 自然衰减间隔（分钟）
-  decay_interval: 10
-  # 宠物类型
-  pet_types:
-    - id: cat
-      name: "猫咪"
-      emoji: "🐱"
-      desc: "优雅的小猫咪，各项属性均衡"
-      base_stats:
-        satiety: 70
-        mood: 70
-        health: 80
-        energy: 60
-    - id: dog
-      name: "小狗"
-      emoji: "🐶"
-      desc: "忠诚的小狗，活力充沛"
-      base_stats:
-        satiety: 60
-        mood: 80
-        health: 75
-        energy: 80
-    - id: rabbit
-      name: "兔子"
-      emoji: "🐰"
-      desc: "可爱的小兔子，心情愉悦"
-      base_stats:
-        satiety: 65
-        mood: 90
-        health: 60
-        energy: 65
-    - id: dragon
-      name: "小龙"
-      emoji: "🐲"
-      desc: "传说中的小龙，稀有珍品"
-      base_stats:
-        satiety: 80
-        mood: 60
-        health: 90
-        energy: 85
-    - id: panda
-      name: "熊猫"
-      emoji: "🐼"
-      desc: "憨厚的大熊猫，体质强壮"
-      base_stats:
-        satiety: 75
-        mood: 65
-        health: 95
-        energy: 55
-    - id: fox
-      name: "狐狸"
-      emoji: "🦊"
-      desc: "聪明的小狐狸，学东西快"
-      base_stats:
-        satiety: 55
-        mood: 75
-        health: 65
-        energy: 70
+  # 战斗配置
+  battle:
+    tick_interval: 0.1
+    max_duration: 60
 
-  # 经验公式配置
-  exp:
-    feed: 10
-    play: 15
-    work: 20
-    train: 25
+  # 训练配置
+  training:
+    min_lock_minutes: 10
+    exp_per_level_per_minute: 50

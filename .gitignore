@@ -20,12 +20,19 @@ env/
 # IDE
 .vscode/
 .idea/
+.codex/
+.codebuddy/
 *.swp
 *.swo
 
 # 数据
 data/*.json
 data/images/
+data/*.png
+data/*.py
+
+#设计稿
+design/
 
 # 证书
 certs/
