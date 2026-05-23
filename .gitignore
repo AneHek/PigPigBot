@@ -1,0 +1,35 @@
+# 敏感配置文件
+bot_config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 数据
+data/*.json
+data/images/
+
+# 证书
+certs/
+
+# 系统文件
+.DS_Store
+Thumbs.db
