@@ -6,11 +6,14 @@ Commands: adopt, stats_detail, abandon, rename, top, help,
 """
 from __future__ import annotations
 
+import logging
 import random
 import time
 from pathlib import Path
 
 from src.data_manager import DataManager, Pet, data_manager
+
+logger = logging.getLogger("QQBot")
 from src.pet_config import PET_SPECIES, Skill, SkillEffect, get_pet_image_url, get_pet_image_local_path
 from src.pet_stats import (generate_ivs, generate_quality, QUALITY_INDEX_TO_LABEL,
                            calc_stats, calc_training_exp,
