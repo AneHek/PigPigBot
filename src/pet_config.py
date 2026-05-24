@@ -1,7 +1,7 @@
 """
 pet_config.py — Pet species, skills, and growth data.
 
-All 25 evolution lines from pig.md with 75 skills total.
+All 26 evolution lines from pig.md with skills.
 Growth rates match levelandAtt.md tables exactly.
 """
 from __future__ import annotations
@@ -435,8 +435,19 @@ _add("P024", "speed",
            [dmg(70), control("blind", 1.5)]),
 )
 
-# P025: 仙猪萌 → 仙猪灵 → 仙猪女  (DEFENSE — healing/purify)
-_add("P025", "defense",
+# P025: 粉红猪 → 粉猪小子 → 粉猪大王  (ATTACK — 占位)
+_add("P025", "attack",
+     "粉红猪", "粉猪小子", "粉猪大王",
+     Skill("粉红冲撞", 4, "粉红猪猛烈冲撞造成60点物理伤害",
+           [dmg(60)]),
+     Skill("粉红冲撞", 5, "连续冲撞两次每次50点伤害",
+           [multi_hit(2, 50)]),
+     Skill("粉红冲撞", 7, "粉猪大王之怒：造成120点伤害+眩晕1秒",
+           [dmg(120), control("stun", 1)]),
+)
+
+# P026: 仙猪萌 → 仙猪灵 → 仙猪女  (DEFENSE — healing/purify)
+_add("P026", "defense",
      "仙猪萌", "仙猪灵", "仙猪女",
      Skill("仙气缭绕", 5, "释放仙气回复30点生命",
            [heal(30)]),
@@ -445,6 +456,61 @@ _add("P025", "defense",
      Skill("仙气缭绕", 7, "仙女降临：50点神圣伤害+净化自身负面状态",
            [dmg(50), purify()]),
 )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Pet Image URL Mapping
+# ══════════════════════════════════════════════════════════════════════
+
+def _get_pig_index(species_id: str, evolution_stage: int) -> int:
+    """计算 pig.md 表格中对应的图片索引。
+
+    pig.md 表格 26 行×3 阶段=78 个名字，与 pig_0~pig_77 倒序对应。
+    映射公式: pig_index = 77 - ((species_number - 1) * 3 + stage)
+
+    Args:
+        species_id: "P001" ~ "P026"
+        evolution_stage: 0/1/2
+
+    Returns:
+        图片索引 0~77
+    """
+    species_number = int(species_id[1:])  # "P001" → 1
+    return 77 - ((species_number - 1) * 3 + evolution_stage)
+
+
+def get_pet_image_url(species_id: str, evolution_stage: int,
+                      pig_source: str, callback_domain: str) -> str:
+    """根据宠物ID和进化阶段计算对应形象图片的完整URL。
+
+    Args:
+        species_id: "P001" ~ "P026"
+        evolution_stage: 0/1/2
+        pig_source: 图片来源目录名（如 "cropped_pigs1"）
+        callback_domain: 回调域名（含协议）
+
+    Returns:
+        完整的图片URL字符串
+    """
+    pig_index = _get_pig_index(species_id, evolution_stage)
+    return f"{callback_domain}/static/images/{pig_source}/pig_{pig_index}.png"
+
+
+def get_pet_image_local_path(species_id: str, evolution_stage: int,
+                              base_dir: str) -> str:
+    """根据宠物ID和进化阶段计算本地图片绝对路径（用于Playwright渲染）。
+
+    Args:
+        species_id: "P001" ~ "P026"
+        evolution_stage: 0/1/2
+        base_dir: 宠物形象图本地绝对路径基础目录（如 "D:/QQBot/data/images/cropped_pigs1"）
+                  需在 config.yaml image.pet_image_base_dir 中配置为绝对路径
+
+    Returns:
+        本地图片文件绝对路径
+    """
+    pig_index = _get_pig_index(species_id, evolution_stage)
+    return f"{base_dir}/pig_{pig_index}.png"
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -8,13 +8,104 @@ import random
 from src.pet_config import PET_GROWTH, EVOLUTION_COEFFICIENTS, FIXED_STATS, STAT_CAPS
 
 
-def generate_ivs() -> dict[str, int]:
-    """Generate 6 IVs using normal distribution μ=15 σ=7, clamped [0,31].
+# ══════════════════════════════════════════════════════════════════════
+# 品质档位常量
+# ══════════════════════════════════════════════════════════════════════
 
-    Returns dict with keys: iv_hp, iv_atk, iv_def, iv_spd, iv_crit, iv_eva
+# 品质档位索引 → IV总和范围（含边界）
+QUALITY_RANGES: dict[int, tuple[int, int]] = {
+    0: (0, 30),     # E
+    1: (31, 60),    # D
+    2: (61, 90),    # C
+    3: (91, 120),   # B
+    4: (121, 150),  # A
+    5: (151, 186),  # S
+}
+
+# 品质档位索引 → 标签字母
+QUALITY_INDEX_TO_LABEL: dict[int, str] = {0: "E", 1: "D", 2: "C", 3: "B", 4: "A", 5: "S"}
+
+
+def generate_quality(n: int = 5, p: float = 0.5) -> int:
+    """使用二项分布生成品质档位索引 0~5。
+
+    二项分布 Binomial(n, p) 的概率质量函数：
+      P(k) = C(n,k) * p^k * (1-p)^(n-k)
+
+    Args:
+        n: 试验次数（默认5，对应6个档位）
+        p: 成功概率（默认0.5，对称钟形分布）
+
+    Returns:
+        品质档位索引 0=E, 1=D, 2=C, 3=B, 4=A, 5=S
     """
+    successes = sum(1 for _ in range(n) if random.random() < p)
+    return successes  # 0~n，恰好映射到 0~5 六个品质档位
+
+
+def generate_ivs(quality_index: int | None = None) -> dict[str, int]:
+    """生成6项IV。
+
+    若指定 quality_index，IV总和约束在 QUALITY_RANGES[quality_index] 范围内；
+    否则沿用量品质评分逻辑（兼容旧调用）。
+
+    算法：在档位范围随机取 target_sum → 6个随机权重按比例分配
+    → 钳位到[0,31] → 超出/不足二次分配至未钳位维度 → 最多3轮迭代
+
+    Args:
+        quality_index: 品质档位索引 0~5，None 时对每项独立正态分布
+
+    Returns:
+        dict: {"iv_hp": int, ..., "iv_eva": int}，每项 0~31
+    """
+    iv_keys = ["iv_hp", "iv_atk", "iv_def", "iv_spd", "iv_crit", "iv_eva"]
+
+    if quality_index is not None:
+        lo, hi = QUALITY_RANGES[quality_index]
+        target_sum = random.randint(lo, hi)
+
+        iv_keys = ["iv_hp", "iv_atk", "iv_def", "iv_spd", "iv_crit", "iv_eva"]
+        iv_values = {k: 0 for k in iv_keys}
+
+        # 生成6个随机权重，按比例分配 target_sum
+        weights = [random.random() for _ in range(6)]
+        total_weight = sum(weights)
+        for k, w in zip(iv_keys, weights):
+            iv_values[k] = int(round((w / total_weight) * target_sum))
+
+        # clamp to [0, 31]
+        for k in iv_keys:
+            iv_values[k] = max(0, min(31, iv_values[k]))
+
+        # iterative redistribution to converge on target_sum
+        for _ in range(10):
+            cur_sum = sum(iv_values.values())
+            delta = target_sum - cur_sum
+            if delta == 0:
+                break
+            # select adjustable keys: not at boundary on the side we need to adjust
+            if delta > 0:
+                adjustable = [k for k in iv_keys if iv_values[k] < 31]
+            else:
+                adjustable = [k for k in iv_keys if iv_values[k] > 0]
+            if not adjustable:
+                break
+            # distribute delta evenly
+            per_key = delta // len(adjustable)
+            remainder = delta % len(adjustable)
+            for i, k in enumerate(adjustable):
+                add = per_key + (1 if i < abs(remainder) else 0)
+                iv_values[k] = max(0, min(31, iv_values[k] + add))
+
+        # 最终钳位确保边界
+        for k in iv_keys:
+            iv_values[k] = max(0, min(31, iv_values[k]))
+
+        return iv_values
+
+    # 兼容旧行为：对每项独立正态分布
     ivs = {}
-    for key in ["iv_hp", "iv_atk", "iv_def", "iv_spd", "iv_crit", "iv_eva"]:
+    for key in iv_keys:
         raw = random.gauss(15, 7)
         ivs[key] = max(0, min(31, int(round(raw))))
     return ivs
@@ -94,17 +185,15 @@ def calc_training_exp(level: int, minutes: int) -> int:
 
 
 def quality_rating(ivs: dict[str, int]) -> str:
-    """Map total IV sum to quality rating.
+    """根据IV总和返回品质标签（基于 QUALITY_RANGES 和 QUALITY_INDEX_TO_LABEL）。
 
     E: 0-30, D: 31-60, C: 61-90, B: 91-120, A: 121-150, S: 151-186
     """
     s = sum(ivs.values())
-    if s >= 151: return "S"
-    if s >= 121: return "A"
-    if s >= 91:  return "B"
-    if s >= 61:  return "C"
-    if s >= 31:  return "D"
-    return "E"
+    for idx, (lo, hi) in QUALITY_RANGES.items():
+        if lo <= s <= hi:
+            return QUALITY_INDEX_TO_LABEL[idx]
+    return "E"  # fallback
 
 
 def quality_label(quality: str) -> str:

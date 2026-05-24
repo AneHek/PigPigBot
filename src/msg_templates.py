@@ -65,8 +65,8 @@ def build_button_list(
         rows: 二维按钮列表，格式：
               [
                   [
-                      {"text": "喂食", "command": "/喂食"},
-                      {"text": "状态", "command": "/状态"},
+                      {"text": "属性详情", "command": "/属性"},
+                      {"text": "训练", "command": "/训练"},
                   ],
                   [
                       {"text": "帮助", "command": "/帮助"},
@@ -147,12 +147,48 @@ def build_simple_button_row(
     """快捷构建一行按钮
 
     Args:
-        buttons: [(文本, 指令), ...]，例如 [("喂食", "/喂食"), ("状态", "/状态")]
+        buttons: [(文本, 指令), ...]，例如 [("属性详情", "/属性"), ("训练", "/训练")]
 
     Returns:
         单行按钮字典列表
     """
     return [{"text": t, "command": c} for t, c in buttons]
+
+
+def build_markdown_with_buttons(
+    title: str,
+    image: str = "",
+    tip: str = "",
+    rows: list[list[dict]] | None = None,
+    template_id: str | None = None,
+) -> dict:
+    """组合 Markdown 模板消息和按钮键盘为完整消息 dict。
+
+    Args:
+        title: Markdown 模板标题
+        image: 图片URL（可为空）
+        tip: 图片下方提示文本
+        rows: 按钮行列表，同 build_button_list 的 rows 格式
+        template_id: Markdown 模板 ID
+
+    Returns:
+        完整消息 dict，直接可用于消息 API（含 msg_type=2 和 keyboard）
+    """
+    tid = template_id or MARKDOWN_TEMPLATE_ID
+    msg = {
+        "msg_type": 2,
+        "markdown": {
+            "custom_template_id": tid,
+            "params": [
+                {"key": "title", "values": [title]},
+                {"key": "image", "values": [image]},
+                {"key": "tip", "values": [tip]},
+            ],
+        },
+    }
+    if rows:
+        msg["keyboard"] = build_button_list(rows)["keyboard"]
+    return msg
 
 
 def build_auto_grid(

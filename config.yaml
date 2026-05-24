@@ -2,10 +2,11 @@
 webhook:
   # 监听地址（仅本地，由 nginx 代理对外）
   host: "127.0.0.1"
-  # 监听端口
   port: 8080
   # 回调路径
   path: "/qqbot/webhook"
+  # 回调域名（QQ平台可访问的公网地址，不含协议和端口）
+  callback_domain: "https://your-domain.com"
   # 是否本地启用 HTTPS
   #   false: 纯 HTTP，由 nginx 反向代理提供 HTTPS（推荐）
   #   true : 本地直接 HTTPS（需要有效证书，自签名可能被 QQ 拒绝）
@@ -22,6 +23,13 @@ image:
   dir: "data/images"
   # 图片访问路由前缀（QQ 官方通过此路由访问本地图片）
   route: "/static/images"
+  # 截图存储子目录
+  screenshots_dir: "data/images/screenshots"
+  # 宠物形象图来源目录（cropped_pigs1 或 cropped_pigs2）
+  pig_source: "cropped_pigs2"
+  # 宠物形象图本地绝对路径基础目录（Playwright渲染时使用，需要绝对路径）
+  # 例如: "D:/QQBot/data/images/cropped_pigs1"
+  pet_image_base_dir: "D:/QQBot/data/images/cropped_pigs2"
 
 # Redis 配置
 redis:
@@ -41,3 +49,8 @@ game:
   training:
     min_lock_minutes: 10
     exp_per_level_per_minute: 50
+
+  # IV品质二项分布配置
+  iv_quality:
+    binomial_n: 5
+    binomial_p: 0.5

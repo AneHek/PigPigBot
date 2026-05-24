@@ -39,9 +39,10 @@ def extract_mention(content: str) -> str | None:
     return None
 
 
-def handle_message(user_id: str, user_name: str, content: str) -> Reply:
-    """Route user message to the appropriate handler."""
-    # Check for @mention PvP (battle triggered by mentioning someone with pet)
+async def handle_message(user_id: str, user_name: str, content: str) -> Reply:
+    """异步路由用户消息到对应处理器。"""
+    import inspect
+
     mentioned_id = extract_mention(content)
     raw_cmd, arg = parse_command(content)
 
@@ -54,11 +55,9 @@ def handle_message(user_id: str, user_name: str, content: str) -> Reply:
 
     cmd = raw_cmd.lower()
 
-    # ── Command routing ──
+    # ── 命令路由表 ──
     handlers = {
-        # Chinese
         "领养": lambda: game.adopt(user_id, user_name, arg),
-        "状态": lambda: game.status(user_id),
         "属性": lambda: game.stats_detail(user_id),
         "遗弃": lambda: game.abandon(user_id),
         "改名": lambda: game.rename(user_id, arg),
@@ -69,9 +68,7 @@ def handle_message(user_id: str, user_name: str, content: str) -> Reply:
         "训练": lambda: game.start_training(user_id),
         "休息": lambda: game.end_training(user_id),
         "战斗": lambda: game.battle_pvp(user_id, mentioned_id) if mentioned_id else "❌ 请 @一个人 来发起战斗！\n例如：/战斗 @某人",
-        # English
         "adopt": lambda: game.adopt(user_id, user_name, arg),
-        "status": lambda: game.status(user_id),
         "stats": lambda: game.stats_detail(user_id),
         "abandon": lambda: game.abandon(user_id),
         "rename": lambda: game.rename(user_id, arg),
@@ -85,7 +82,10 @@ def handle_message(user_id: str, user_name: str, content: str) -> Reply:
 
     if cmd in handlers:
         try:
-            return handlers[cmd]()
+            result = handlers[cmd]()
+            if inspect.iscoroutine(result):
+                result = await result
+            return result
         except Exception as e:
             return f"❌ 命令执行出错：{e}"
 

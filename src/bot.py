@@ -4,6 +4,8 @@ bot.py - QQ 机器人 Webhook 模式 (HTTPS)
 """
 import json
 import ssl
+import time
+import asyncio
 import logging
 import datetime
 from pathlib import Path
@@ -17,6 +19,14 @@ from src.handler import handle_message
 from src.token_manager import token_manager
 
 logger = logging.getLogger("QQBot")
+
+# Playwright lazy import（避免未安装时崩溃）
+_playwright_available = True
+try:
+    from playwright.async_api import async_playwright
+except ImportError:
+    _playwright_available = False
+    logger.warning("Playwright 未安装，HTML截图功能不可用。请执行: pip install playwright && playwright install chromium 或 playwright install msedge")
 
 # API 基础 URL
 SANDBOX = config["bot"]["sandbox"]
@@ -109,6 +119,16 @@ class QQBot:
         self.app_id = str(config["bot"]["app_id"])
         self.secret = config["bot"]["secret"]
         self._sessions: dict[str, aiohttp.ClientSession] = {}
+        self._playwright_browser = None
+        self._playwright = None
+
+        # ── 去重与防抖 ──
+        self._processed_msg_ids: dict[str, float] = {}   # msg_id → 处理时间戳
+        self._last_user_request: dict[str, float] = {}    # user_id → 最近请求时间戳
+        self._MSG_ID_TTL = 10.0       # 同一 msg_id 10s 内重复则忽略
+        self._USER_DEBOUNCE = 2.0     # 同一用户请求间隔至少 2s
+        self._cleanup_task: asyncio.Task | None = None              # 去重记录清理
+        self._daily_screenshot_cleanup_task: asyncio.Task | None = None  # 截图每日兜底清理
 
     # ──────────────────────────────────────────────
     # 签名与验证
@@ -144,7 +164,6 @@ class QQBot:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """获取或创建 HTTP Session"""
-        import asyncio
         task_id = id(asyncio.current_task())
         if task_id not in self._sessions:
             self._sessions[task_id] = aiohttp.ClientSession()
@@ -240,7 +259,7 @@ class QQBot:
 
         logger.info(f"群聊 @ 消息 | 用户: {user_name}({user_id}) | 群: {group_openid} | 内容: {content[:50]}")
 
-        reply = handle_message(user_id, user_name, content)
+        reply = await handle_message(user_id, user_name, content)
         if reply:
             await self.send_group_reply(group_openid, msg_id, reply)
 
@@ -258,9 +277,31 @@ class QQBot:
 
         logger.info(f"私聊消息 | 用户: {user_name}({user_id}) | 内容: {content[:50]}")
 
-        reply = handle_message(user_id, user_name, content)
+        reply = await handle_message(user_id, user_name, content)
         if reply:
             await self.send_c2c_reply(user_id, msg_id, reply)
+
+    # ──────────────────────────────────────────────
+    # 去重 / 防抖工具
+    # ──────────────────────────────────────────────
+
+    def _cleanup_expired(self) -> None:
+        """清理过期的去重和防抖记录，防止内存泄漏"""
+        now = time.time()
+        msg_cutoff = now - self._MSG_ID_TTL
+        user_cutoff = now - self._USER_DEBOUNCE
+        self._processed_msg_ids = {
+            k: v for k, v in self._processed_msg_ids.items() if v > msg_cutoff
+        }
+        self._last_user_request = {
+            k: v for k, v in self._last_user_request.items() if v > user_cutoff
+        }
+
+    async def _cleanup_loop(self) -> None:
+        """后台协程：每 30 秒清理一次过期记录"""
+        while True:
+            await asyncio.sleep(30)
+            self._cleanup_expired()
 
     # ──────────────────────────────────────────────
     # Webhook HTTP 路由处理
@@ -318,6 +359,32 @@ class QQBot:
         if op == 0:
             event_type = body.get("t", "")
             event_data = d
+
+            # 提取 msg_id 和 user_id（群聊/私聊字段统一提取）
+            msg_id = event_data.get("id", "")
+            author = event_data.get("author", {})
+            user_id = author.get("member_openid") or author.get("user_openid") or author.get("id", "")
+
+            now = time.time()
+
+            # ── msg_id 去重：10s 内同一 msg_id 视为重放，直接忽略 ──
+            if msg_id and msg_id in self._processed_msg_ids:
+                if now - self._processed_msg_ids[msg_id] < self._MSG_ID_TTL:
+                    logger.debug(f"忽略重复消息 msg_id={msg_id}")
+                    return web.Response(text='{"code": 0}', content_type="application/json")
+
+            # ── user_id 防抖：同一用户 2s 内多次请求只处理第一次 ──
+            if user_id and user_id in self._last_user_request:
+                elapsed = now - self._last_user_request[user_id]
+                if elapsed < self._USER_DEBOUNCE:
+                    logger.debug(f"忽略高频请求 user_id={user_id} elapsed={elapsed:.2f}s")
+                    return web.Response(text='{"code": 0}', content_type="application/json")
+
+            # 记录本次请求
+            if msg_id:
+                self._processed_msg_ids[msg_id] = now
+            if user_id:
+                self._last_user_request[user_id] = now
 
             if event_type == "GROUP_AT_MESSAGE_CREATE":
                 await self.handle_group_at(event_data)
@@ -384,6 +451,9 @@ class QQBot:
         # ── 启动 Token 管理器（后台获取 & 定时刷新）──
         await token_manager.start()
 
+        # ── 启动后台清理协程（去重/防抖记录过期清理）──
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+
         webhook_cfg = config["webhook"]
         host = webhook_cfg["host"]
         port = webhook_cfg["port"]
@@ -402,6 +472,35 @@ class QQBot:
             abs_image_dir = Path(__file__).parent.parent / abs_image_dir
         abs_image_dir.mkdir(parents=True, exist_ok=True)
         app.router.add_static(image_route, str(abs_image_dir), show_index=True)
+
+        # ── 清理截图孤儿文件 + 确保目录存在 ──
+        from src.image_lifecycle import cleanup_orphan_files, daily_cleanup_loop
+        screenshots_dir = Path(image_cfg.get("screenshots_dir", "data/images/screenshots"))
+        if not screenshots_dir.is_absolute():
+            screenshots_dir = Path(__file__).parent.parent / screenshots_dir
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        cleanup_orphan_files(screenshots_dir)
+
+        # ── 启动截图每日 0 点兜底清理协程 ──
+        self._daily_screenshot_cleanup_task = asyncio.create_task(
+            daily_cleanup_loop(screenshots_dir)
+        )
+
+        # ── 启动 Playwright browser（优先 chromium，失败则尝试 msedge）──
+        if _playwright_available:
+            try:
+                self._playwright = await async_playwright().start()
+                try:
+                    self._playwright_browser = await self._playwright.chromium.launch(headless=True)
+                    logger.info("🎭 Playwright browser 已启动 (chromium)")
+                except Exception:
+                    logger.info("Chromium 不可用，尝试使用 Microsoft Edge...")
+                    self._playwright_browser = await self._playwright.chromium.launch(
+                        channel="msedge", headless=True
+                    )
+                    logger.info("🎭 Playwright browser 已启动 (msedge)")
+            except Exception as e:
+                logger.warning(f"Playwright browser 启动失败: {e}，截图功能不可用")
 
         # ── SSL 配置 ──
         ssl_context = self._build_ssl_context()
@@ -431,14 +530,33 @@ class QQBot:
         logger.info(f"Webhook 服务已启动，等待事件推送...")
 
         # 保持运行
-        import asyncio
         while True:
             await asyncio.sleep(3600)
 
     async def shutdown(self):
         """清理资源"""
+        # 取消后台清理协程
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+
+        # 取消截图每日清理协程
+        if self._daily_screenshot_cleanup_task:
+            self._daily_screenshot_cleanup_task.cancel()
+            try:
+                await self._daily_screenshot_cleanup_task
+            except asyncio.CancelledError:
+                pass
+
         await token_manager.shutdown()
         for session in self._sessions.values():
             await session.close()
         self._sessions.clear()
+        if self._playwright_browser:
+            await self._playwright_browser.close()
+        if self._playwright:
+            await self._playwright.stop()
         logger.info("机器人已关闭")

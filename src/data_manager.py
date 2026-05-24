@@ -27,6 +27,7 @@ _redis_client = redis.Redis(
 KEY_PET = "qqbot:pet:{user_id}"
 KEY_COOLDOWN = "qqbot:cooldown:{user_id}"
 KEY_LEADERBOARD = "qqbot:leaderboard"
+KEY_SCREENSHOT = "qqbot:screenshot:{user_id}"
 
 # Ensure image directory exists
 _IMAGE_DIR = Path(__file__).parent.parent / config["image"]["dir"]
@@ -134,6 +135,9 @@ class DataManager:
 
     def _cooldown_key(self, user_id: str) -> str:
         return KEY_COOLDOWN.format(user_id=user_id)
+
+    def _screenshot_key(self, user_id: str) -> str:
+        return KEY_SCREENSHOT.format(user_id=user_id)
 
     # ── Pet CRUD ──
 
@@ -326,6 +330,16 @@ class DataManager:
     def set_cooldown(self, user_id: str, action: str, seconds: int):
         _redis_client.hset(self._cooldown_key(user_id), action,
                           time.time() + seconds)
+
+    # ── Screenshot UUID ──
+
+    def get_screenshot_uuid(self, user_id: str) -> str | None:
+        """获取用户当前截图 UUID 记录"""
+        return _redis_client.get(self._screenshot_key(user_id))
+
+    def set_screenshot_uuid(self, user_id: str, uuid_str: str) -> None:
+        """保存用户截图 UUID 记录"""
+        _redis_client.set(self._screenshot_key(user_id), uuid_str)
 
     # ── Leaderboard ──
 

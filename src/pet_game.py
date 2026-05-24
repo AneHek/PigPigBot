@@ -1,49 +1,127 @@
 """
 pet_game.py - Battle pet game logic.
 
-Commands: adopt, status, abandon, rename, top, help,
-          battle_pvp, evolve, train, rest, stats_detail
+Commands: adopt, stats_detail, abandon, rename, top, help,
+          battle_pvp, evolve, train, rest
 """
 from __future__ import annotations
 
 import random
 import time
+from pathlib import Path
 
 from src.data_manager import DataManager, Pet, data_manager
-from src.pet_config import PET_SPECIES, Skill, SkillEffect
-from src.pet_stats import (generate_ivs, calc_stats, calc_training_exp,
+from src.pet_config import PET_SPECIES, Skill, SkillEffect, get_pet_image_url, get_pet_image_local_path
+from src.pet_stats import (generate_ivs, generate_quality, QUALITY_INDEX_TO_LABEL,
+                           calc_stats, calc_training_exp,
                            format_battle_stats, format_iv_detail, quality_label)
 from src.battle import battle_engine, format_battle_report
+from src.config import config
 
 
 class PetGame:
     """Battle pet game."""
 
-    def __init__(self, dm: DataManager):
+    def __init__(self, dm: DataManager, bot=None):
         self.dm = dm
+        self.bot = bot
+
+    # ── Screenshot helper ──
+
+    async def _build_pet_message(self, pet: Pet, scene: str,
+                                  title: str, tip: str,
+                                  rows: list[list[dict]],
+                                  old_pet: Pet = None) -> dict:
+        """生成截图并构建 Markdown+按钮 消息dict。
+
+        基于 pet.last_update 生成确定性 UUID 作为截图名，数据未变则复用已有截图。
+
+        Args:
+            pet: 宠物数据
+            scene: 场景 (adopt/stats/evolve/training)
+            title: Markdown模板标题
+            tip: Markdown模板tip文本
+            rows: 按钮行列表
+            old_pet: 进化前的旧宠物（仅 evolve 使用，显示属性变化预览）
+
+        Returns:
+            完整消息dict（含markdown段和keyboard段）
+        """
+        from src.image_gen import render_pet_html, html_to_image
+        from src.image_lifecycle import generate_screenshot_uuid
+        from src.msg_templates import build_markdown_with_buttons
+
+        callback_domain = config["webhook"].get("callback_domain", "")
+        pig_source = config["image"].get("pig_source", "cropped_pigs1")
+        image_url = get_pet_image_url(pet.species_id, pet.evolution_stage,
+                                      pig_source, callback_domain)
+
+        # 本地绝对路径（用于Playwright渲染宠物图片）
+        base_dir = config["image"].get("pet_image_base_dir", "")
+        if base_dir and not Path(base_dir).is_absolute():
+            base_dir = str(Path(__file__).parent.parent / base_dir)
+        local_image_path = get_pet_image_local_path(
+            pet.species_id, pet.evolution_stage, base_dir) if base_dir else ""
+
+        # 截图目录
+        screenshots_dir = Path(config["image"].get("screenshots_dir", "data/images/screenshots"))
+        if not screenshots_dir.is_absolute():
+            screenshots_dir = Path(__file__).parent.parent / screenshots_dir
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        user_id = pet.owner_id
+
+        # 基于 last_update 生成确定性 UUID，数据不变则 UUID 不变
+        screenshot_uuid = generate_screenshot_uuid(user_id, pet.last_update)
+        filename = f"{screenshot_uuid}.png"
+        output_path = screenshots_dir / filename
+
+        # 检查是否与记录一致且文件存在 → 直接复用
+        recorded_uuid = self.dm.get_screenshot_uuid(user_id)
+        if recorded_uuid == screenshot_uuid and output_path.exists():
+            screenshot_url = f"{callback_domain}/static/images/screenshots/{filename}"
+            return build_markdown_with_buttons(title, screenshot_url, tip, rows)
+
+        # ── 需要重新生成：先删除旧截图 ──
+        if recorded_uuid:
+            old_path = screenshots_dir / f"{recorded_uuid}.png"
+            if old_path.exists():
+                old_path.unlink()
+                logger.debug(f"已删除旧截图: {old_path.name}")
+
+        # ── 生成新截图 ──
+        if self.bot and hasattr(self.bot, '_playwright_browser') and self.bot._playwright_browser:
+            html = render_pet_html(pet, scene, image_url, local_image_path,
+                                   old_pet=old_pet)
+            await html_to_image(self.bot._playwright_browser, html, output_path)
+            self.dm.set_screenshot_uuid(user_id, screenshot_uuid)
+            screenshot_url = f"{callback_domain}/static/images/screenshots/{filename}"
+        else:
+            # 截图不可用时用原图代替
+            screenshot_url = image_url
+
+        return build_markdown_with_buttons(title, screenshot_url, tip, rows)
 
     # ── Adopt ──
 
-    def adopt(self, user_id: str, user_name: str, _arg: str = "") -> str:
-        """Randomly adopt a pet from 25 species."""
+    async def adopt(self, user_id: str, user_name: str, _arg: str = "") -> str | dict:
+        """领养随机宠物 P001~P026，生成截图+按钮消息。"""
         if self.dm.has_pet(user_id):
             pet = self.dm.get_pet(user_id)
             return (f"❌ 你已经有一只 {pet.species_name}「{pet.name}」了！\n"
                     f"使用「/遗弃」先放生当前宠物才能领养新的哦~")
 
-        # Random species
-        species_id = random.choice(list(PET_SPECIES.keys()))
+        species_num = random.randint(1, 26)
+        species_id = f"P{species_num:03d}"
         species = PET_SPECIES[species_id]
-        pet_name = species["names"][0]  # Stage 0 name
+        pet_name = species["names"][0]
 
-        # Generate IVs
-        ivs = generate_ivs()
+        quality_index = generate_quality()
+        ivs = generate_ivs(quality_index)
+        q_rating = QUALITY_INDEX_TO_LABEL[quality_index]
 
-        # Calculate stats
         stats = calc_stats(species_id, 0, 1, ivs)
         battle_type = species["battle_type"]
-        q = sum(ivs.values())
-        q_rating = "S" if q >= 151 else "A" if q >= 121 else "B" if q >= 91 else "C" if q >= 61 else "D" if q >= 31 else "E"
 
         pet = self.dm.create_pet(user_id, user_name, species_id, pet_name,
                                  battle_type, ivs, stats)
@@ -52,43 +130,42 @@ class PetGame:
         type_names = {"attack": "攻击型", "defense": "防御型", "speed": "速度型"}
         btype_cn = type_names.get(battle_type, battle_type)
 
-        return (
-            f"🎉 领养成功！\n"
-            f"🐷 一只{pet_name}成为了你的伙伴！\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"⭐ 品质：{q_rating}({quality_label(q_rating)})  |  类型：{btype_cn}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📛 名字：{pet_name}（可使用 /改名 修改）\n"
-            f"使用「/状态」查看宠物详情  |  「/帮助」查看所有命令"
-        )
+        title = f"🎉 {pet_name} 成为了你的伙伴！"
+        tip = (f"品质：{q_rating}({quality_label(q_rating)})  |  类型：{btype_cn}  |  "
+               f"可使用「/改名」给宠物取一个喜欢的名字哦~")
+        rows = [
+            [{"text": "🧬 属性详情", "command": "/属性"},
+             {"text": "⚔️ 战斗", "command": "/战斗"}],
+            [{"text": "💪 训练", "command": "/训练"}],
+        ]
+        return await self._build_pet_message(pet, "adopt", title, tip, rows)
 
-    # ── Status ──
+    # ── Stats Detail ──
 
-    def status(self, user_id: str) -> str:
-        """Show pet battle status."""
+    async def stats_detail(self, user_id: str) -> str | dict:
+        """查看属性详情含IV，生成截图+按钮消息。"""
         pet = self.dm.get_pet(user_id)
         if pet is None:
             return "❌ 你还没有宠物！使用「/领养」来领养一只猪吧~"
 
         self.dm.update_leaderboard(pet)
 
-        # Gate info
+        # 进化门槛警告
         gate_info = ""
         if pet.evolution_stage == 0 and pet.level >= 29:
-            gate_info = "\n⚠️ 已达 29 级上限，需要「/进化」才能继续升级！"
+            gate_info = " | ⚠️ 已达29级上限，需要进化"
         elif pet.evolution_stage == 1 and pet.level >= 59:
-            gate_info = "\n⚠️ 已达 59 级上限，需要「/进化」才能继续升级！"
+            gate_info = " | ⚠️ 已达59级上限，需要进化"
 
-        return format_battle_stats(pet) + gate_info
-
-    # ── Stats Detail ──
-
-    def stats_detail(self, user_id: str) -> str:
-        """Show detailed stats including IVs."""
-        pet = self.dm.get_pet(user_id)
-        if pet is None:
-            return "❌ 你还没有宠物！使用「/领养」来领养一只猪吧~"
-        return format_battle_stats(pet) + "\n\n" + format_iv_detail(pet)
+        title = f"{pet.species_name} · Lv.{pet.level} 属性详情"
+        tip = (f"{pet.name} | 品质:{pet.quality}({quality_label(pet.quality)})"
+               f" | IV总和:{pet.iv_sum}/186 | EXP:{pet.exp}/{pet.max_exp}{gate_info}")
+        rows = [
+            [{"text": "🔮 进化", "command": "/进化"},
+             {"text": "💪 训练", "command": "/训练"}],
+            [{"text": "⚔️ 战斗", "command": "/战斗"}],
+        ]
+        return await self._build_pet_message(pet, "stats", title, tip, rows)
 
     # ── Abandon ──
 
@@ -115,7 +192,8 @@ class PetGame:
 
     # ── Evolve ──
 
-    def evolve(self, user_id: str) -> str:
+    async def evolve(self, user_id: str) -> str | dict:
+        """进化宠物，生成截图+按钮消息。"""
         pet = self.dm.get_pet(user_id)
         if pet is None:
             return "❌ 你还没有宠物！使用「/领养」来领养一只猪吧~"
@@ -128,6 +206,9 @@ class PetGame:
             return f"❌ 需要达到 Lv.{gate} 才能进化！（当前 Lv.{pet.level}）"
 
         old_name = pet.species_name
+        # 保存进化前数据用于属性变化预览
+        import copy
+        old_pet = copy.deepcopy(pet)
         result = self.dm.evolve_pet(user_id)
         if result is None:
             return "❌ 进化失败，请稍后再试。"
@@ -136,17 +217,19 @@ class PetGame:
         self.dm.update_leaderboard(result)
 
         stage_names = ["一阶", "二阶", "三阶"]
-        return (
-            f"🎊 进化成功！\n"
-            f"🐷 {old_name} → {new_name}\n"
-            f"⭐ 新形态：{stage_names[result.evolution_stage]}进化\n"
-            f"📊 解锁新技能！属性已追溯重算\n"
-            f"使用「/状态」查看新形态的详细属性"
-        )
+        title = f"🎊 {old_name} → {new_name}"
+        tip = f"新形态：{stage_names[result.evolution_stage]}进化 | Lv.{result.level}"
+        rows = [
+            [{"text": "🧬 属性详情", "command": "/属性"},
+             {"text": "💪 训练", "command": "/训练"}],
+        ]
+        return await self._build_pet_message(result, "evolve", title, tip, rows,
+                                             old_pet=old_pet)
 
     # ── Training ──
 
-    def start_training(self, user_id: str) -> str:
+    async def start_training(self, user_id: str) -> str | dict:
+        """开始训练，生成截图+按钮消息（展示当前状态）。"""
         pet = self.dm.get_pet(user_id)
         if pet is None:
             return "❌ 你还没有宠物！使用「/领养」来领养一只猪吧~"
@@ -161,17 +244,16 @@ class PetGame:
             return "❌ 开始训练失败。"
 
         exp_10min = calc_training_exp(pet.level, 10)
-        return (
-            f"💪 {pet.species_name}「{pet.name}」开始训练！\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"⏱ 训练中... 最少训练 10 分钟\n"
-            f"📊 预计 10 分钟后获得 {exp_10min} 经验\n"
-            f"📊 训练时间越长，经验越多！\n"
-            f"🔒 训练期间无法进行其他操作\n"
-            f"💡 记得 10 分钟后使用「/休息」结束训练领取经验！"
-        )
+        title = f"💪 {pet.species_name} 开始训练"
+        tip = f"最少10分钟 | 预计{exp_10min}经验 | 训练越长经验越多"
+        rows = [
+            [{"text": "🛌 结束训练", "command": "/休息"}],
+            [{"text": "🧬 属性详情", "command": "/属性"}],
+        ]
+        return await self._build_pet_message(result, "training", title, tip, rows)
 
-    def end_training(self, user_id: str) -> str:
+    async def end_training(self, user_id: str) -> str | dict:
+        """结束训练，生成截图+按钮消息。"""
         pet = self.dm.get_pet(user_id)
         if pet is None:
             return "❌ 你还没有宠物！使用「/领养」来领养一只猪吧~"
@@ -191,26 +273,23 @@ class PetGame:
         minutes = int((time.time() - pet.training_start) / 60)
         self.dm.update_leaderboard(result)
 
-        # Check if level up occurred
         level_info = ""
         if result.level > pet.level:
-            level_info = f"\n🎉 升级了！Lv.{pet.level} → Lv.{result.level}"
+            level_info = f" | 🎉 Lv.{pet.level}→Lv.{result.level}"
 
-        # Check evolution gate
         gate_info = ""
         if result.evolution_stage == 0 and result.level >= 29:
-            gate_info = "\n⚠️ 已达 29 级上限，需要「/进化」才能继续升级！"
+            gate_info = " ⚠️ 可进化"
         elif result.evolution_stage == 1 and result.level >= 59:
-            gate_info = "\n⚠️ 已达 59 级上限，需要「/进化」才能继续升级！"
+            gate_info = " ⚠️ 可进化"
 
-        return (
-            f"🛌 {result.species_name}「{result.name}」训练结束！\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"⏱ 训练时长：{minutes} 分钟\n"
-            f"✨ 获得经验：{exp_gained}\n"
-            f"📊 当前经验：{result.exp}/{result.max_exp}"
-            f"{level_info}{gate_info}"
-        )
+        title = f"🛌 {result.species_name} 训练结束"
+        tip = f"训练{minutes}分钟 | 获得{exp_gained}经验{level_info}{gate_info}"
+        rows = [
+            [{"text": "🧬 属性详情", "command": "/属性"},
+             {"text": "💪 再训练", "command": "/训练"}],
+        ]
+        return await self._build_pet_message(result, "training", title, tip, rows)
 
     # ── PvP Battle ──
 
@@ -279,22 +358,20 @@ class PetGame:
     def help(self) -> str:
         return (
             "🐷 宠物战斗机器人 - 帮助菜单\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "━━━━━━━━━━━━━\n"
             "📋 基础命令：\n"
             "  /领养        - 随机领养一只猪猪宠物\n"
-            "  /状态        - 查看宠物属性\n"
-            "  /属性        - 查看详细属性(含IV)\n"
+            "  /属性        - 查看宠物属性详情(含IV)\n"
             "  /遗弃        - 遗弃当前宠物\n"
             "  /改名 <名>   - 给宠物改名\n"
             "  /帮助        - 显示本帮助\n\n"
             "⚔️ 战斗与成长：\n"
-            "  /战斗 @某人  - 与对方宠物进行战斗\n"
+            "  /战斗 @某人  - 进行PK\n"
             "  /进化        - 进化宠物(Lv29/Lv59)\n"
-            "  /训练        - 开始训练(10分钟)\n"
+            "  /训练        - 开始训练(10分钟以上)\n"
             "  /休息        - 结束训练领取经验\n\n"
             "🏆 /排行 - 查看排行榜\n\n"
-            "💡 提示：训练是获取经验的主要方式，\n"
-            "   战斗可以获得额外经验奖励！"
+            "💡 提示：\n\t训练是获取经验的主要方式\n\t战斗可以获得额外经验奖励！"
         )
 
 

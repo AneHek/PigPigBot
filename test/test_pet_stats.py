@@ -9,37 +9,87 @@ from unittest.mock import patch, MagicMock
 sys.modules['redis'] = MagicMock()
 
 from src.pet_stats import (
-    generate_ivs, iv_coefficient, calc_stats, calc_max_exp,
+    generate_ivs, generate_quality, QUALITY_RANGES, QUALITY_INDEX_TO_LABEL,
+    iv_coefficient, calc_stats, calc_max_exp,
     calc_training_exp, quality_rating, quality_label,
 )
 
 
-class TestIVGeneration(unittest.TestCase):
-    """Test IV generation."""
+class TestGenerateQuality(unittest.TestCase):
+    """Test binomial quality generation."""
 
-    def test_generate_ivs_returns_six_values(self):
+    def test_generate_quality_returns_valid_index(self):
+        """品质索引应在 0~5 范围内"""
+        for _ in range(200):
+            idx = generate_quality(5, 0.5)
+            self.assertGreaterEqual(idx, 0)
+            self.assertLessEqual(idx, 5)
+
+    def test_generate_quality_distribution(self):
+        """二项分布分布近似校验：各档位应有合理的出现概率"""
+        counts = {i: 0 for i in range(6)}
+        samples = 5000
+        for _ in range(samples):
+            counts[generate_quality(5, 0.5)] += 1
+        # 每个档位至少出现 1%（考虑二项分布 0 和 5 概率均为 1/32≈3%）
+        for i in range(6):
+            ratio = counts[i] / samples
+            self.assertGreater(ratio, 0.005, f"档位 {i} 概率异常低: {ratio:.4f}")
+
+
+class TestIVGeneration(unittest.TestCase):
+    """Test IV generation with quality constraint."""
+
+    def test_generate_ivs_no_quality_returns_six_values(self):
+        """无品质约束时仍返回6项IV"""
         ivs = generate_ivs()
         self.assertEqual(len(ivs), 6)
         for key in ["iv_hp", "iv_atk", "iv_def", "iv_spd", "iv_crit", "iv_eva"]:
             self.assertIn(key, ivs)
 
     def test_ivs_in_range(self):
+        """每项IV在 [0, 31]"""
         for _ in range(100):
             ivs = generate_ivs()
             for v in ivs.values():
                 self.assertGreaterEqual(v, 0)
                 self.assertLessEqual(v, 31)
 
-    def test_iv_distribution_approximate(self):
-        """IV mean should be roughly around 15."""
-        results = []
-        for _ in range(500):
-            ivs = generate_ivs()
-            results.append(sum(ivs.values()))
-        avg = sum(results) / len(results)
-        # Mean should be roughly 6*15 = 90
-        self.assertGreater(avg, 70)
-        self.assertLess(avg, 110)
+    def test_ivs_with_quality_constraint(self):
+        """指定品质档位后，IV总和应在档位范围内"""
+        for qi in range(6):
+            lo, hi = QUALITY_RANGES[qi]
+            for _ in range(50):
+                ivs = generate_ivs(qi)
+                s = sum(ivs.values())
+                # 允许 ±5 的容差（钳位可能导致微小偏移）
+                self.assertGreaterEqual(s, lo - 5,
+                    f"QI={qi}: sum={s} < lo={lo}")
+                self.assertLessEqual(s, hi + 5,
+                    f"QI={qi}: sum={s} > hi={hi}")
+
+    def test_quality_ranges_match_rating(self):
+        """QUALITY_RANGES 和 quality_rating() 边界一致"""
+        test_sums = [0, 30, 31, 60, 61, 90, 91, 120, 121, 150, 151, 186]
+        for s in test_sums:
+            # 构造假IV字典
+            fake_ivs = {
+                "iv_hp": s // 6,
+                "iv_atk": s // 6,
+                "iv_def": s // 6,
+                "iv_spd": s // 6,
+                "iv_crit": s // 6,
+                "iv_eva": s - 5 * (s // 6),
+            }
+            rating = quality_rating(fake_ivs)
+            # 验证：档位范围内找对应标签
+            found = False
+            for qi, (lo, hi) in QUALITY_RANGES.items():
+                if lo <= s <= hi and QUALITY_INDEX_TO_LABEL[qi] == rating:
+                    found = True
+                    break
+            self.assertTrue(found,
+                f"sum={s} rating={rating} not matching QUALITY_RANGES")
 
 
 class TestIVCoefficient(unittest.TestCase):

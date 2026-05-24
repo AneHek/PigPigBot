@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.bot import QQBot
 from src.config import config
+from src.pet_game import game
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -43,6 +44,7 @@ async def main():
     check_config()
 
     bot = QQBot()
+    game.bot = bot  # 注入bot引用以支持截图生成
     try:
         await bot.start()
     except KeyboardInterrupt:
@@ -55,6 +57,7 @@ async def main():
 
 if __name__ == "__main__":
     if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        # ProactorEventLoopPolicy 兼容 Playwright 的管道传输，同时 aiohttp 3.8+ 完全支持
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
     asyncio.run(main())

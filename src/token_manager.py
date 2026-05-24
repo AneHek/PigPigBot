@@ -23,10 +23,6 @@ TOKEN_API_URL = "https://bots.qq.com/app/getAppAccessToken"
 REDIS_TOKEN_KEY = "qqbot:access_token"
 REDIS_TOKEN_EXPIRES_KEY = "qqbot:access_token_expires_at"
 
-# 刷新阈值：剩余有效期低于此比例时提前刷新
-REFRESH_THRESHOLD = 0.3  # 剩余 30% 有效期时刷新
-
-
 class TokenManager:
     """QQ 机器人 AccessToken 管理器（基于 Redis + 后台线程）"""
 
@@ -150,26 +146,49 @@ class TokenManager:
                 should_refresh = await self._need_refresh()
 
                 if should_refresh:
+                    # 记录刷新前的过期时间，用于检测 token 是否真的更新了
+                    old_expires = await self._get_expires_at()
                     logger.info("token 即将过期，刷新中...")
-                    await self.fetch_and_store_token()
+                    result = await self.fetch_and_store_token()
+
+                    if result is None:
+                        logger.warning("token 刷新失败，5s 后重试")
+                        await self._sleep_with_stop(5)
+                    else:
+                        # 检查 token 是否真的更新了（QQ 平台只在过期前 60s 返回新 token）
+                        new_expires = await self._get_expires_at()
+                        if new_expires and old_expires and abs(new_expires - old_expires) < 1:
+                            # 令牌未实际刷新（还在 QQ 刷新窗口外），等待进入窗口
+                            remaining = old_expires - time.time()
+                            wait = max(remaining - 50, 5)  # 等到只剩 50s
+                            logger.info(f"token 未实际更新（QQ 刷新窗口外），{wait:.0f}s 后重试")
+                            await self._sleep_with_stop(int(wait))
+                        else:
+                            logger.info("token 刷新成功")
+                            await self._sleep_with_stop(5)
                 else:
-                    # 计算下次检查时间：取剩余有效期的 REFRESH_THRESHOLD 时间
+                    # 计算下次检查时间
                     sleep_seconds = await self._get_sleep_seconds()
                     logger.debug(f"token 状态正常，{sleep_seconds}s 后再次检查")
-                    for _ in range(int(sleep_seconds)):
-                        if self._stop_event.is_set():
-                            break
-                        await asyncio.sleep(1)
+                    await self._sleep_with_stop(sleep_seconds)
 
             except Exception as e:
                 logger.error(f"token 刷新循环异常: {e}")
                 # 出错后等待 60 秒再重试
-                for _ in range(60):
-                    if self._stop_event.is_set():
-                        break
-                    await asyncio.sleep(1)
+                await self._sleep_with_stop(60)
 
         logger.info("Token 刷新循环已停止")
+
+    async def _get_expires_at(self) -> float | None:
+        """从 Redis 读取 token 过期时间戳，失败返回 None"""
+        try:
+            r = await self._get_redis()
+            expires_str = await r.get(REDIS_TOKEN_EXPIRES_KEY)
+            if expires_str:
+                return float(expires_str)
+            return None
+        except Exception:
+            return None
 
     async def _token_exists(self) -> bool:
         """检查 Redis 中是否存在有效 token"""
@@ -180,7 +199,12 @@ class TokenManager:
             return False
 
     async def _need_refresh(self) -> bool:
-        """判断是否需要刷新 token"""
+        """判断是否需要刷新 token
+
+        QQ 平台限制：只在过期前 60s 内才能拿到新 token，
+        提前请求只会返回旧 token。因此阈值设在 55s，
+        留 5s 缓冲确保进入刷新窗口。
+        """
         try:
             r = await self._get_redis()
             expires_str = await r.get(REDIS_TOKEN_EXPIRES_KEY)
@@ -190,10 +214,8 @@ class TokenManager:
             expires_at = float(expires_str)
             remaining = expires_at - time.time()
 
-            # 剩余有效期 <= 总有效期的 30% 时刷新
-            # 从 config 获取默认 expires_in，或者直接按比例判断
-            # 简单策略：剩余少于 1800s (30min) 时刷新
-            threshold = 1800  # 30 分钟
+            # QQ 平台只在过期前 60s 内允许刷新
+            threshold = 55
 
             if remaining <= threshold:
                 logger.info(f"token 剩余有效期 {remaining:.0f}s <= {threshold}s，需要刷新")
@@ -204,21 +226,28 @@ class TokenManager:
             logger.error(f"检查 token 有效期失败: {e}")
             return True  # 出错时也尝试刷新
 
+    async def _sleep_with_stop(self, seconds: int):
+        """带停止信号的 sleep，收到 stop 事件时提前退出"""
+        for _ in range(int(seconds)):
+            if self._stop_event.is_set():
+                break
+            await asyncio.sleep(1)
+
     async def _get_sleep_seconds(self) -> int:
-        """计算下次检查的等待秒数"""
+        """计算下次检查的等待秒数（等到剩余 threshold 时再检查）"""
         try:
             r = await self._get_redis()
             expires_str = await r.get(REDIS_TOKEN_EXPIRES_KEY)
             if not expires_str:
-                return 60  # 默认 60s
+                return 60
 
             expires_at = float(expires_str)
             remaining = expires_at - time.time()
-            threshold = 1800  # 30 分钟
+            threshold = 55  # 与 _need_refresh 保持一致
 
-            # 等到剩余 threshold 时再检查
-            sleep_seconds = max(int(remaining - threshold), 60)
-            return min(sleep_seconds, 3600)  # 最多等 1 小时
+            # 等到剩余 threshold 时再检查，至少等 10s 避免忙等
+            sleep_seconds = max(int(remaining - threshold), 10)
+            return min(sleep_seconds, 3600)
 
         except Exception:
             return 60

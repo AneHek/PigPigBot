@@ -89,13 +89,19 @@ QQ 平台 → POST /qqbot/webhook → QQBot.webhook_handler()
   - 技能通过 `SkillEffect` 数据驱动执行，支持 damage、dot、hot、heal、debuff、buff、control、shield、reflect、true_damage、crit_guaranteed、purify、interrupt、confuse、auto_skill 共 15 种效果类型
   - `format_battle_report()`：输出战斗结果和最后 10 个事件日志
 
-- `pet_config.py`：25 种宠物（P001~P025）的完整数据定义。每个物种有 3 阶段名称、battle_type（attack/defense/speed）、每阶段 1-3 个技能。底部 `PET_GROWTH` 定义三种类型的属性成长表（base_initial + per_level_growth），`EVOLUTION_COEFFICIENTS` 提供阶段系数 [1.0, 1.10, 1.21]。
+- `pet_config.py`：26 种宠物（P001~P026）的完整数据定义。新增 P025 粉红猪系（占位），原 P025 仙猪萌系后移为 P026。包含 `get_pet_image_url()` 图片映射函数，公式 `pig_index = 77 - ((num-1)*3 + stage)`。
   
-- `pet_stats.py`：属性计算模块。IV 生成用正态分布 μ=15 σ=7 钳位到 [0,31]；IV 修正系数 `f = 0.75 + (IV/31) × 0.5`；最终属性公式 `base_init × f + per_level × f × E × (level - 1)`，E 为进化系数。`format_battle_stats()` 和 `format_iv_detail()` 格式化显示。
+- `pet_stats.py`：属性计算模块。IV 生成通过二项分布 Binomial(5,0.5) 先决定品质档位（E~S），再在档位IV总和范围内生成6项IV。`QUALITY_RANGES` 和 `QUALITY_INDEX_TO_LABEL` 统一品质判定。IV 修正系数 `f = 0.75 + (IV/31) × 0.5`；最终属性公式 `base_init × f + per_level × f × E × (level - 1)`。
 
 **消息模板层**
 
-- `msg_templates.py`：封装 QQ 官方 Markdown 模板和按钮列表（内嵌键盘）。`build_markdown_msg()` 使用自定义 template_id；`build_button_list_msg()` 支持自由行列布局和 `build_auto_grid()` 自动网格排列。
+- `msg_templates.py`：封装 QQ 官方 Markdown 模板和按钮列表。`build_markdown_msg()` 使用自定义 template_id；`build_button_list_msg()` 支持自由行列布局；`build_markdown_with_buttons()` 组合 markdown+keyboard 为完整消息 dict。
+
+**图片服务层**
+
+- `image_gen.py`：HTML 渲染和 Playwright 截图。`render_pet_html()` 支持5种场景(adopt/status/stats/evolve/training)的宠物信息HTML模板，含宠物形象 `<img>` 标签。`html_to_image()` 通过 headless chromium/msedge 截图输出PNG。
+- `image_lifecycle.py`：截图生命周期管理。`schedule_deletion()` 异步延迟60秒删除文件；`cleanup_orphan_files()` 启动时清理 screenshots 目录孤儿文件。
+- 图片映射：`get_pet_image_url()` 将 species_id+stage 映射到 `cropped_pigs1/2` 目录的 `pig_0~pig_77.png`，倒序对应 pig.md 表格中78个名字。
 
 ### 配置双文件设计
 
