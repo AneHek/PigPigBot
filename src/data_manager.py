@@ -27,7 +27,7 @@ _redis_client = redis.Redis(
 KEY_PET = "qqbot:pet:{user_id}"
 KEY_COOLDOWN = "qqbot:cooldown:{user_id}"
 KEY_LEADERBOARD = "qqbot:leaderboard"
-KEY_SCREENSHOT = "qqbot:screenshot:{user_id}"
+KEY_SCREENSHOT = "qqbot:screenshot:{user_id}:{scene}"
 KEY_GROUP_MEMBERS = "qqbot:group:{group_id}"
 KEY_GAME_UID_COUNTER = "qqbot:game_uid_counter"
 KEY_GAME_UID_MAP = "qqbot:game_uid:{game_uid}"
@@ -143,8 +143,8 @@ class DataManager:
     def _cooldown_key(self, user_id: str) -> str:
         return KEY_COOLDOWN.format(user_id=user_id)
 
-    def _screenshot_key(self, user_id: str) -> str:
-        return KEY_SCREENSHOT.format(user_id=user_id)
+    def _screenshot_key(self, user_id: str, scene: str = "") -> str:
+        return KEY_SCREENSHOT.format(user_id=user_id, scene=scene)
 
     # ── Pet CRUD ──
 
@@ -257,6 +257,9 @@ class DataManager:
 
         进化后保留多余经验并继续升级，若宠物名等于旧种族名则同步更新为新种族名。
         """
+        import logging
+        logger = logging.getLogger("DataManager")
+        
         pet = self.get_pet(user_id)
         if pet is None:
             return None
@@ -266,14 +269,29 @@ class DataManager:
         if pet.level < gate_level:
             return None
 
+        old_stage = pet.evolution_stage
         old_species_name = pet.species_name
+        old_pet_name = pet.name
+        
+        logger.info(f"[进化] user={user_id}, 进化前: stage={old_stage}, "
+                   f"pet.name='{old_pet_name}', species_name='{old_species_name}'")
 
         pet.evolution_stage += 1
         pet.level += 1
         pet.last_update = time.time()
+        
+        new_species_name = pet.species_name
+        logger.info(f"[进化] 进化后: stage={pet.evolution_stage}, "
+                   f"new_species_name='{new_species_name}'")
 
-        if pet.name == old_species_name:
-            pet.name = pet.species_name
+        # 检查宠物名是否为任意阶段的默认种族名，如果是则更新为新阶段名
+        from src.pet_config import PET_SPECIES
+        all_species_names = PET_SPECIES.get(pet.species_id, {}).get("names", [])
+        if pet.name in all_species_names:
+            logger.info(f"[进化] 自动改名: '{pet.name}' → '{new_species_name}'")
+            pet.name = new_species_name
+        else:
+            logger.info(f"[进化] 不改名: pet.name='{pet.name}' 不是默认种族名")
 
         level_up_occurred = False
         while True:
@@ -365,13 +383,13 @@ class DataManager:
 
     # ── Screenshot UUID ──
 
-    def get_screenshot_uuid(self, user_id: str) -> str | None:
+    def get_screenshot_uuid(self, user_id: str, scene: str = "") -> str | None:
         """获取用户当前截图 UUID 记录"""
-        return _redis_client.get(self._screenshot_key(user_id))
+        return _redis_client.get(self._screenshot_key(user_id, scene))
 
-    def set_screenshot_uuid(self, user_id: str, uuid_str: str) -> None:
+    def set_screenshot_uuid(self, user_id: str, uuid_str: str, scene: str = "") -> None:
         """保存用户截图 UUID 记录"""
-        _redis_client.set(self._screenshot_key(user_id), uuid_str)
+        _redis_client.set(self._screenshot_key(user_id, scene), uuid_str)
 
     # ── Leaderboard ──
 

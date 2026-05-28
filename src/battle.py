@@ -223,8 +223,8 @@ class BattleEngine:
                     if key in s:
                         available_skills.append(s[key])
 
-        # Skill CD timers
-        skill_cds = [0.0] * len(available_skills)
+        # Skill CD timers - 所有技能初始时都处于冷却状态
+        skill_cds = [skill.cd for skill in available_skills]
 
         bp = BattlePet(
             owner_id=pet_dict.get("owner_id", ""),
@@ -284,8 +284,10 @@ class BattleEngine:
             skill = pet.skills[pet.skill_index]
             if pet.skill_cds[pet.skill_index] <= 0:
                 self._execute_skill(pet, enemy, pet.skill_index, events, elapsed, type_mult)
-                pet.skill_cds[pet.skill_index] = skill.cd
-                pet.skill_index = (pet.skill_index + 1) % len(pet.skills)
+                # 当前技能使用后，设置下一个技能的冷却时间
+                next_index = (pet.skill_index + 1) % len(pet.skills)
+                pet.skill_cds[next_index] = pet.skills[next_index].cd
+                pet.skill_index = next_index
                 # Skill after-swing: reset attack_timer to 50% of interval
                 pet.attack_timer = pet.attack_interval * 0.5
                 acted = True
