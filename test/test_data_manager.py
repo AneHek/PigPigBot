@@ -13,12 +13,14 @@ class InMemoryRedis:
     _store: dict[str, str] = {}
     _hashes: dict[str, dict[str, str]] = {}
     _zsets: dict[str, dict[str, float]] = {}
+    _sets: dict[str, set] = {}
 
     @classmethod
     def reset(cls):
         cls._store = {}
         cls._hashes = {}
         cls._zsets = {}
+        cls._sets = {}
 
     def __init__(self, *args, **kwargs):
         pass
@@ -46,6 +48,9 @@ class InMemoryRedis:
                 count += 1
             if k in self._zsets:
                 del self._zsets[k]
+                count += 1
+            if k in self._sets:
+                del self._sets[k]
                 count += 1
         return count
 
@@ -88,6 +93,25 @@ class InMemoryRedis:
         for key in self._store:
             if key.startswith(prefix):
                 yield key
+
+    def incr(self, key: str, amount: int = 1) -> int:
+        val = int(self._store.get(key, 0))
+        val += amount
+        self._store[key] = str(val)
+        return val
+
+    def sadd(self, key: str, *values: str) -> int:
+        if key not in self._sets:
+            self._sets[key] = set()
+        added = 0
+        for v in values:
+            if v not in self._sets[key]:
+                self._sets[key].add(v)
+                added += 1
+        return added
+
+    def smembers(self, key: str) -> set:
+        return self._sets.get(key, set())
 
 
 # ── Mock config ──
@@ -366,6 +390,68 @@ class TestLeaderboard(TestDataManagerBase):
         self.assertIn("species_name", board[0])
         self.assertIn("evolution_stage", board[0])
         self.assertIn("quality", board[0])
+
+
+class TestGroupMembers(TestDataManagerBase):
+    def test_add_group_member(self):
+        """add_group_member 将用户加入群组SET"""
+        self.dm.add_group_member("group_001", "user_001")
+        self.dm.add_group_member("group_001", "user_002")
+        self.dm.add_group_member("group_001", "user_001")  # 重复加入
+
+        import src.data_manager as dm_mod
+        members = dm_mod._redis_client.smembers(
+            dm_mod.KEY_GROUP_MEMBERS.format(group_id="group_001"))
+        self.assertEqual(len(members), 2)
+        self.assertIn("user_001", members)
+        self.assertIn("user_002", members)
+
+
+class TestGameUID(TestDataManagerBase):
+    def test_assign_game_uid_first_time(self):
+        """首次分配游戏用户ID从1开始"""
+        uid = self.dm.assign_game_uid("user_001")
+        self.assertEqual(uid, 1)
+
+    def test_assign_game_uid_increment(self):
+        """多次分配递增"""
+        uid1 = self.dm.assign_game_uid("user_001")
+        uid2 = self.dm.assign_game_uid("user_002")
+        self.assertEqual(uid1, 1)
+        self.assertEqual(uid2, 2)
+
+    def test_assign_game_uid_idempotent(self):
+        """同一用户重复分配返回相同ID"""
+        uid1 = self.dm.assign_game_uid("user_001")
+        uid2 = self.dm.assign_game_uid("user_001")
+        self.assertEqual(uid1, uid2)
+
+    def test_get_user_game_uid_not_exists(self):
+        """未分配时返回0"""
+        uid = self.dm.get_user_game_uid("nonexistent")
+        self.assertEqual(uid, 0)
+
+    def test_get_user_by_game_uid(self):
+        """通过游戏用户ID反查QQ用户ID"""
+        self.dm.assign_game_uid("user_001")
+        result = self.dm.get_user_by_game_uid(1)
+        self.assertEqual(result, "user_001")
+
+    def test_get_user_by_game_uid_not_exists(self):
+        """不存在的游戏用户ID返回None"""
+        result = self.dm.get_user_by_game_uid(999)
+        self.assertIsNone(result)
+
+    def test_pet_game_uid_field(self):
+        """Pet 对象包含 game_uid 字段"""
+        ivs = {"iv_hp": 15, "iv_atk": 15, "iv_def": 15, "iv_spd": 15, "iv_crit": 15, "iv_eva": 15}
+        stats = calc_stats("P001", 0, 1, ivs)
+        pet = self.dm.create_pet("user001", "张三", "P001", "猪", "attack", ivs, stats)
+        self.assertEqual(pet.game_uid, 0)
+
+        self.dm.update_pet("user001", game_uid=5)
+        pet2 = self.dm.get_pet("user001")
+        self.assertEqual(pet2.game_uid, 5)
 
 
 if __name__ == "__main__":

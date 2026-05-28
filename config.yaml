@@ -30,6 +30,8 @@ image:
   # 宠物形象图本地绝对路径基础目录（Playwright渲染时使用，需要绝对路径）
   # 例如: "D:/QQBot/data/images/cropped_pigs1"
   pet_image_base_dir: "D:/QQBot/data/images/cropped_pigs2"
+  # 截图最大并发数（2GB 内存建议 2，4GB+ 可设 3-4）
+  screenshot_concurrency: 2
 
 # Redis 配置
 redis:

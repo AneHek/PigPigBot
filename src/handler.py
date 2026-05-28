@@ -7,6 +7,7 @@ import re
 from typing import Union
 
 from src.pet_game import game
+from src.data_manager import data_manager
 
 Reply = Union[str, dict]
 
@@ -39,21 +40,24 @@ def extract_mention(content: str) -> str | None:
     return None
 
 
-async def handle_message(user_id: str, user_name: str, content: str) -> Reply:
+async def handle_message(user_id: str, user_name: str, content: str,
+                         group_id: str = "") -> Reply:
     """异步路由用户消息到对应处理器。"""
     import inspect
 
-    mentioned_id = extract_mention(content)
     raw_cmd, arg = parse_command(content)
-
-    # If no slash command but has @mention, treat as battle
-    if not raw_cmd and mentioned_id and mentioned_id != user_id:
-        return game.battle_pvp(user_id, mentioned_id)
 
     if not raw_cmd:
         return ""
 
     cmd = raw_cmd.lower()
+
+    def _resolve_battle_target() -> str | None:
+        """从参数解析游戏用户ID并反查QQ用户ID"""
+        if not arg or not arg.isdigit():
+            return None
+        target_game_uid = int(arg)
+        return data_manager.get_user_by_game_uid(target_game_uid)
 
     # ── 命令路由表 ──
     handlers = {
@@ -67,7 +71,8 @@ async def handle_message(user_id: str, user_name: str, content: str) -> Reply:
         "进化": lambda: game.evolve(user_id),
         "训练": lambda: game.start_training(user_id),
         "休息": lambda: game.end_training(user_id),
-        "战斗": lambda: game.battle_pvp(user_id, mentioned_id) if mentioned_id else "❌ 请 @一个人 来发起战斗！\n例如：/战斗 @某人",
+        "注册": lambda: game.register(user_id),
+        "战斗": lambda: game.battle_pvp(user_id, _resolve_battle_target()) if _resolve_battle_target() else "❌ 请提供对方的游戏用户ID！\n例如：/战斗 123",
         "adopt": lambda: game.adopt(user_id, user_name, arg),
         "stats": lambda: game.stats_detail(user_id),
         "abandon": lambda: game.abandon(user_id),
@@ -77,7 +82,8 @@ async def handle_message(user_id: str, user_name: str, content: str) -> Reply:
         "evolve": lambda: game.evolve(user_id),
         "train": lambda: game.start_training(user_id),
         "rest": lambda: game.end_training(user_id),
-        "battle": lambda: game.battle_pvp(user_id, mentioned_id) if mentioned_id else "❌ 请 @一个人 来发起战斗！\n例如：/战斗 @某人",
+        "register": lambda: game.register(user_id),
+        "battle": lambda: game.battle_pvp(user_id, _resolve_battle_target()) if _resolve_battle_target() else "❌ 请提供对方的游戏用户ID！\n例如：/战斗 123",
     }
 
     if cmd in handlers:

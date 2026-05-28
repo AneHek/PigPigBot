@@ -121,13 +121,25 @@ body {
 .exp-val { font-size: 12px; color: #64748b; }
 .exp-bar-bg { background: #f1f5f9; border-radius: 7px; height: 14px; overflow: hidden; }
 .exp-bar-fill { height: 100%; border-radius: 7px; background: linear-gradient(90deg, #34d399, #10b981); }
-/* ── 进化预览箭头 ── */
-.evolve-info { padding: 10px 24px; border-top: 1px solid #fef3c7; background: #fffbeb; }
-.evolve-info .evolve-title { font-size: 13px; font-weight: 600; color: #d97706; margin-bottom: 6px; }
-.evolve-info .evolve-line { font-size: 12px; color: #92400e; }
-/* ── 训练信息 ── */
-.training-info { padding: 10px 24px; border-top: 1px solid #dbeafe; background: #eff6ff; }
-.training-info .training-text { font-size: 13px; color: #2563eb; font-weight: 600; }
+/* ── 技能信息区域（左右布局） ── */
+.skill-section {
+    padding: 14px 20px; border-top: 1px solid #eef1f5;
+    background: rgba(255,255,255,0.85); display: flex; gap: 14px;
+}
+.skill-left { flex: 0 0 100px; display: flex; flex-direction: column; justify-content: center; }
+.skill-left-name { font-size: 14px; font-weight: bold; color: #1e293b; margin-bottom: 6px; }
+.skill-left-tip { font-size: 11px; color: #94a3b8; line-height: 1.5; }
+.skill-right { flex: 1; display: flex; flex-direction: column; gap: 0; }
+.skill-item {
+    background: #f8fafc; border-radius: 8px; padding: 8px 10px;
+    border-left: 3px solid #3b82f6;
+}
+.skill-item-header { font-size: 12px; font-weight: 600; color: #334155; margin-bottom: 3px; }
+.skill-item-desc { font-size: 11px; color: #64748b; line-height: 1.4; }
+.skill-arrow {
+    text-align: center; font-size: 14px; color: #94a3b8;
+    padding: 2px 0; line-height: 1;
+}
 /* ── Footer ── */
 .footer {
     padding: 12px 24px; font-size: 11px; color: #cbd5e1;
@@ -258,17 +270,61 @@ def _resolve_image_src(local_image_path: str, image_url: str) -> str:
     return image_url
 
 
-def render_pet_html(pet: Pet, scene: str, image_url: str,
+def _skill_section_html(pet: Pet) -> str:
+    """生成技能信息区域HTML（左右布局，右侧技能上下排列带↓箭头）"""
+    from src.pet_config import PET_SPECIES
+
+    stage_labels = ["一", "二", "三"]
+    species = PET_SPECIES.get(pet.species_id, {})
+    all_skills = species.get("skills", [])
+
+    available = []
+    for i in range(min(pet.evolution_stage + 1, len(all_skills))):
+        skill = all_skills[i]
+        if hasattr(skill, 'name'):
+            available.append((stage_labels[i], skill))
+
+    if not available:
+        return ""
+
+    right_items = []
+    for idx, (stage_label, skill) in enumerate(available):
+        cd_str = f"{skill.cd:.0f}" if skill.cd == int(skill.cd) else f"{skill.cd}"
+        item = (
+            f'<div class="skill-item">'
+            f'<div class="skill-item-header">{stage_label}阶段（{cd_str}s）</div>'
+            f'<div class="skill-item-desc">{skill.description}</div>'
+            f'</div>'
+        )
+        right_items.append(item)
+        if idx < len(available) - 1:
+            right_items.append('<div class="skill-arrow">↓</div>')
+
+    right_html = "\n".join(right_items)
+
+    return (
+        f'<div class="skill-section">'
+        f'<div class="skill-left">'
+        f'<div class="skill-left-name">{available[0][1].name}</div>'
+        f'<div class="skill-left-tip">技能按阶段<br>轮流使用</div>'
+        f'</div>'
+        f'<div class="skill-right">{right_html}</div>'
+        f'</div>'
+    )
+
+
+def render_pet_html(pet: Pet, image_url: str,
                     local_image_path: str = "",
-                    old_pet: Pet | None = None) -> str:
-    """根据场景渲染宠物信息HTML字符串。
+                    old_pet: Pet | None = None,
+                    base64_image: str = "") -> str:
+    """渲染宠物信息HTML字符串（含技能信息区域）。
 
     Args:
         pet: 宠物数据对象
-        scene: 场景标识 (adopt/stats/evolve/training)
         image_url: 宠物形象图片URL
         local_image_path: 宠物形象图本地绝对路径
         old_pet: 进化前旧宠物，用于显示 旧值→新值 箭头预览
+        base64_image: base64 data URI 格式图片，优先使用（配合 set_content 免临时文件）
 
     Returns:
         完整的HTML字符串（内联CSS）
@@ -277,7 +333,7 @@ def render_pet_html(pet: Pet, scene: str, image_url: str,
     stage = stage_names[pet.evolution_stage] if pet.evolution_stage < 3 else "三阶"
     quality = pet.quality
     type_str = _type_html(pet.battle_type)
-    img_src = _resolve_image_src(local_image_path, image_url)
+    img_src = base64_image if base64_image else _resolve_image_src(local_image_path, image_url)
 
     # ── 头部：左图-中名-右品质菱形 ──
     subtitle = f"{type_str} · {stage} · Lv.{pet.level}"
@@ -297,7 +353,6 @@ def render_pet_html(pet: Pet, scene: str, image_url: str,
     for icon, name, key in _STAT_DEFS:
         stat_rows += _stat_row(icon, name, key, pet, old_pet)
 
-    # 暴击伤害 + 吸血
     stat_rows += (
         f'<tr>'
         f'<td class="stat-icon">🔪</td>'
@@ -318,7 +373,7 @@ def render_pet_html(pet: Pet, scene: str, image_url: str,
         f'</div>'
     )
 
-    # ── EXP 条（所有场景默认显示，放属性最下方） ──
+    # ── EXP 条 ──
     exp_part = (
         f'<div style="padding:8px 24px 12px;border-top:1px solid #f8fafc;'
         f'background:rgba(255,255,255,0.85)">'
@@ -326,34 +381,8 @@ def render_pet_html(pet: Pet, scene: str, image_url: str,
         f'</div>'
     )
 
-    # ── 场景额外信息 ──
-    extra = exp_part
-
-    if scene == "evolve":
-        stage_after = stage_names[pet.evolution_stage] if pet.evolution_stage < 3 else "三阶"
-        evolve_block = (
-            f'<div class="evolve-info">'
-            f'<div class="evolve-title">🎊 进化完成</div>'
-            f'<div class="evolve-line">新形态：{stage_after}进化</div>'
-            f'<div class="evolve-line">新等级：Lv.{pet.level}</div>'
-            f'</div>'
-        )
-        extra = exp_part + evolve_block
-
-    elif scene == "training":
-        import time
-        if pet.training:
-            elapsed = int((time.time() - pet.training_start) / 60)
-            training_block = (
-                f'<div class="training-info">'
-                f'<div class="training-text">⏳ 训练中 · 已训练 {elapsed} 分钟</div>'
-                f'</div>'
-            )
-            extra = exp_part + training_block
-
-    # status 和 adopt 均使用相同基础模板（无额外信息）
-    # scene == "status" 合并到基础模板
-    # scene == "adopt" 的改名提示移到 message tip 中
+    # ── 技能信息区域 ──
+    skill_part = _skill_section_html(pet)
 
     footer = '<div class="footer">猪猪养成</div>'
 
@@ -362,42 +391,38 @@ def render_pet_html(pet: Pet, scene: str, image_url: str,
 <body><div class="card">
 {header}
 {stats_section}
-{extra}
+{exp_part}
+{skill_part}
 {footer}
 </div></body></html>"""
 
 
-async def html_to_image(browser, html_str: str, output_path: Path) -> None:
+async def html_to_image(browser, html_str: str, output_path: Path,
+                        page=None) -> None:
     """使用Playwright将HTML字符串渲染为PNG截图。
 
-    将 HTML 写入临时文件后通过 file:// 协议加载，确保页面源为 file://，
-    从而允许加载 file:// 协议的图片（Chromium 安全策略要求同源）。
+    通过 page.set_content() 直接注入 HTML，配合 base64 data URI 图片，
+    无需写入临时文件或 file:// 协议加载，减少磁盘 I/O 开销。
 
     Args:
         browser: Playwright browser 实例（chromium headless）
-        html_str: 完整的HTML字符串
+        html_str: 完整的HTML字符串（图片应使用 base64 data URI）
         output_path: 输出PNG文件路径
+        page: 可选的预热页面，传入则复用（不关闭），否则新建并关闭
     """
     import time as _time
     start = _time.time()
 
-    # 写入临时 HTML 文件，使页面源为 file:// 以允许 file:// 图片加载
-    tmp_html = output_path.with_suffix(".tmp.html")
-    tmp_html.write_text(html_str, encoding="utf-8")
-    file_url = f"file:///{tmp_html.resolve().as_posix()}"
-
-    page = await browser.new_page(viewport={"width": 380, "height": 800})
+    own_page = page is None
+    if own_page:
+        page = await browser.new_page(viewport={"width": 380, "height": 800})
     try:
-        await page.goto(file_url, wait_until="networkidle")
+        await page.set_content(html_str, wait_until="load")
         body_height = await page.evaluate("document.body.scrollHeight")
         await page.set_viewport_size({"width": 380, "height": body_height + 8})
         await page.screenshot(path=str(output_path), full_page=True)
         elapsed = _time.time() - start
         logger.info(f"截图生成: {output_path.name} ({elapsed:.2f}s)")
     finally:
-        await page.close()
-        # 清理临时 HTML 文件
-        try:
-            tmp_html.unlink()
-        except FileNotFoundError:
-            pass
+        if own_page:
+            await page.close()

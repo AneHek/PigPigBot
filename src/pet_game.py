@@ -6,6 +6,7 @@ Commands: adopt, stats_detail, abandon, rename, top, help,
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import time
@@ -31,17 +32,116 @@ class PetGame:
 
     # ── Screenshot helper ──
 
-    async def _build_pet_message(self, pet: Pet, scene: str,
+    async def _generate_screenshot(self, pet: Pet,
+                                    old_pet: Pet = None) -> str | None:
+        """生成截图文件，受信号量并发限制。
+
+        非进化场景共用同一张截图（scene=""），进化场景使用 scene="evolve" 以包含属性变化预览。
+
+        Args:
+            pet: 宠物数据
+            old_pet: 进化前旧宠物（仅 evolve 使用）
+
+        Returns:
+            截图文件名（如 uuid.png），截图不可用时返回 None
+        """
+        import asyncio
+        import base64
+        from src.image_gen import render_pet_html, html_to_image
+        from src.image_lifecycle import generate_screenshot_uuid, schedule_deletion
+
+        scene = "evolve" if old_pet is not None else ""
+
+        callback_domain = config["webhook"].get("callback_domain", "")
+        pig_source = config["image"].get("pig_source", "cropped_pigs1")
+        image_url = get_pet_image_url(pet.species_id, pet.evolution_stage,
+                                      pig_source, callback_domain)
+
+        base_dir = config["image"].get("pet_image_base_dir", "")
+        if base_dir and not Path(base_dir).is_absolute():
+            base_dir = str(Path(__file__).parent.parent / base_dir)
+        local_image_path = get_pet_image_local_path(
+            pet.species_id, pet.evolution_stage, base_dir) if base_dir else ""
+
+        screenshots_dir = Path(config["image"].get("screenshots_dir", "data/images/screenshots"))
+        if not screenshots_dir.is_absolute():
+            screenshots_dir = Path(__file__).parent.parent / screenshots_dir
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+        user_id = pet.owner_id
+        screenshot_uuid = generate_screenshot_uuid(user_id, pet.last_update, scene)
+        filename = f"{screenshot_uuid}.png"
+        output_path = screenshots_dir / filename
+
+        recorded_uuid = self.dm.get_screenshot_uuid(user_id)
+        if recorded_uuid == screenshot_uuid and output_path.exists():
+            return filename
+
+        if recorded_uuid:
+            old_path = screenshots_dir / f"{recorded_uuid}.png"
+            if old_path.exists():
+                schedule_deletion(old_path, delay_seconds=60)
+
+        if not (self.bot and hasattr(self.bot, '_playwright_browser')
+                and self.bot._playwright_browser):
+            return None
+
+        base64_image = ""
+        if local_image_path and Path(local_image_path).exists():
+            img_bytes = Path(local_image_path).read_bytes()
+            b64 = base64.b64encode(img_bytes).decode("ascii")
+            base64_image = f"data:image/png;base64,{b64}"
+
+        html = render_pet_html(pet, image_url, local_image_path,
+                               old_pet=old_pet, base64_image=base64_image)
+
+        browser = self.bot._playwright_browser
+        page = None
+        if hasattr(self.bot, '_page_pool') and self.bot._page_pool:
+            try:
+                page = self.bot._page_pool.pop()
+            except IndexError:
+                page = None
+
+        sem = getattr(self.bot, '_screenshot_semaphore', None)
+        if sem:
+            await sem.acquire()
+        try:
+            await html_to_image(browser, html, output_path, page=page)
+        finally:
+            if sem:
+                sem.release()
+            if page is not None:
+                self.bot._page_pool.append(page)
+
+        dm = self.dm
+        async def _record_uuid():
+            try:
+                dm.set_screenshot_uuid(user_id, screenshot_uuid)
+            except Exception:
+                pass
+        asyncio.create_task(_record_uuid())
+
+        return filename
+
+    async def _pre_generate_screenshot(self, pet: Pet,
+                                        old_pet: Pet = None) -> None:
+        """后台预生成截图（fire-and-forget），加速后续查看。"""
+        try:
+            await self._generate_screenshot(pet, old_pet)
+        except Exception as e:
+            logger.debug(f"预生成截图失败: {e}")
+
+    async def _build_pet_message(self, pet: Pet,
                                   title: str, tip: str,
                                   rows: list[list[dict]],
                                   old_pet: Pet = None) -> dict:
         """生成截图并构建 Markdown+按钮 消息dict。
 
-        基于 pet.last_update 生成确定性 UUID 作为截图名，数据未变则复用已有截图。
+        非进化场景共用同一张截图，进化场景额外包含属性变化预览。
 
         Args:
             pet: 宠物数据
-            scene: 场景 (adopt/stats/evolve/training)
             title: Markdown模板标题
             tip: Markdown模板tip文本
             rows: 按钮行列表
@@ -50,8 +150,6 @@ class PetGame:
         Returns:
             完整消息dict（含markdown段和keyboard段）
         """
-        from src.image_gen import render_pet_html, html_to_image
-        from src.image_lifecycle import generate_screenshot_uuid
         from src.msg_templates import build_markdown_with_buttons
 
         callback_domain = config["webhook"].get("callback_domain", "")
@@ -59,48 +157,11 @@ class PetGame:
         image_url = get_pet_image_url(pet.species_id, pet.evolution_stage,
                                       pig_source, callback_domain)
 
-        # 本地绝对路径（用于Playwright渲染宠物图片）
-        base_dir = config["image"].get("pet_image_base_dir", "")
-        if base_dir and not Path(base_dir).is_absolute():
-            base_dir = str(Path(__file__).parent.parent / base_dir)
-        local_image_path = get_pet_image_local_path(
-            pet.species_id, pet.evolution_stage, base_dir) if base_dir else ""
+        filename = await self._generate_screenshot(pet, old_pet)
 
-        # 截图目录
-        screenshots_dir = Path(config["image"].get("screenshots_dir", "data/images/screenshots"))
-        if not screenshots_dir.is_absolute():
-            screenshots_dir = Path(__file__).parent.parent / screenshots_dir
-        screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-        user_id = pet.owner_id
-
-        # 基于 last_update 生成确定性 UUID，数据不变则 UUID 不变
-        screenshot_uuid = generate_screenshot_uuid(user_id, pet.last_update)
-        filename = f"{screenshot_uuid}.png"
-        output_path = screenshots_dir / filename
-
-        # 检查是否与记录一致且文件存在 → 直接复用
-        recorded_uuid = self.dm.get_screenshot_uuid(user_id)
-        if recorded_uuid == screenshot_uuid and output_path.exists():
-            screenshot_url = f"{callback_domain}/static/images/screenshots/{filename}"
-            return build_markdown_with_buttons(title, screenshot_url, tip, rows)
-
-        # ── 需要重新生成：先删除旧截图 ──
-        if recorded_uuid:
-            old_path = screenshots_dir / f"{recorded_uuid}.png"
-            if old_path.exists():
-                old_path.unlink()
-                logger.debug(f"已删除旧截图: {old_path.name}")
-
-        # ── 生成新截图 ──
-        if self.bot and hasattr(self.bot, '_playwright_browser') and self.bot._playwright_browser:
-            html = render_pet_html(pet, scene, image_url, local_image_path,
-                                   old_pet=old_pet)
-            await html_to_image(self.bot._playwright_browser, html, output_path)
-            self.dm.set_screenshot_uuid(user_id, screenshot_uuid)
+        if filename:
             screenshot_url = f"{callback_domain}/static/images/screenshots/{filename}"
         else:
-            # 截图不可用时用原图代替
             screenshot_url = image_url
 
         return build_markdown_with_buttons(title, screenshot_url, tip, rows)
@@ -108,11 +169,15 @@ class PetGame:
     # ── Adopt ──
 
     async def adopt(self, user_id: str, user_name: str, _arg: str = "") -> str | dict:
-        """领养随机宠物 P001~P026，生成截图+按钮消息。"""
+        """领养随机宠物 P001~P026，生成截图+按钮消息。首次领养自动分配游戏用户ID。"""
         if self.dm.has_pet(user_id):
             pet = self.dm.get_pet(user_id)
             return (f"❌ 你已经有一只 {pet.species_name}「{pet.name}」了！\n"
                     f"使用「/遗弃」先放生当前宠物才能领养新的哦~")
+
+        game_uid = self.dm.get_user_game_uid(user_id)
+        if game_uid == 0:
+            game_uid = self.dm.assign_game_uid(user_id)
 
         species_num = random.randint(1, 26)
         species_id = f"P{species_num:03d}"
@@ -128,6 +193,8 @@ class PetGame:
 
         pet = self.dm.create_pet(user_id, user_name, species_id, pet_name,
                                  battle_type, ivs, stats)
+        pet.game_uid = game_uid
+        self.dm.update_pet(user_id, game_uid=game_uid)
         self.dm.update_leaderboard(pet)
 
         type_names = {"attack": "攻击型", "defense": "防御型", "speed": "速度型"}
@@ -135,13 +202,15 @@ class PetGame:
 
         title = f"🎉 {pet_name} 成为了你的伙伴！"
         tip = (f"品质：{q_rating}({quality_label(q_rating)})  |  类型：{btype_cn}  |  "
-               f"可使用「/改名」给宠物取一个喜欢的名字哦~")
+               f"游戏ID：{game_uid}  |  可使用「/改名」给宠物取一个喜欢的名字哦~")
         rows = [
             [{"text": "🧬 属性详情", "command": "/属性"},
              {"text": "⚔️ 战斗", "command": "/战斗"}],
             [{"text": "💪 训练", "command": "/训练"}],
         ]
-        return await self._build_pet_message(pet, "adopt", title, tip, rows)
+        msg = await self._build_pet_message(pet, title, tip, rows)
+        asyncio.create_task(self._pre_generate_screenshot(pet))
+        return msg
 
     # ── Stats Detail ──
 
@@ -160,7 +229,7 @@ class PetGame:
         elif pet.evolution_stage == 1 and pet.level >= 59:
             gate_info = " | ⚠️ 已达59级上限，需要进化"
 
-        title = f"{pet.species_name} · Lv.{pet.level} 属性详情"
+        title = f"{pet.species_name}({pet.game_uid}) 属性详情"
         tip = (f"{pet.name} | 品质:{pet.quality}({quality_label(pet.quality)})"
                f" | IV总和:{pet.iv_sum}/186 | EXP:{pet.exp}/{pet.max_exp}{gate_info}")
         rows = [
@@ -168,7 +237,7 @@ class PetGame:
              {"text": "💪 训练", "command": "/训练"}],
             [{"text": "⚔️ 战斗", "command": "/战斗"}],
         ]
-        return await self._build_pet_message(pet, "stats", title, tip, rows)
+        return await self._build_pet_message(pet, title, tip, rows)
 
     # ── Abandon ──
 
@@ -180,6 +249,22 @@ class PetGame:
         self.dm.delete_pet(user_id)
         return (f"😢 你含泪放生了 {pet.species_name}「{name}」...\n"
                 f"使用「/领养」可以重新领养一只新的伙伴。")
+
+    # ── Register ──
+
+    def register(self, user_id: str) -> str:
+        """为已有宠物但无游戏用户ID的旧用户分配游戏用户ID。"""
+        pet = self.dm.get_pet(user_id)
+        if pet is None:
+            return "❌ 你还没有宠物！使用「/领养」来领养一只猪吧~"
+
+        existing_uid = self.dm.get_user_game_uid(user_id)
+        if existing_uid > 0:
+            return f"✅ 你已经注册过了！你的游戏用户ID是：{existing_uid}"
+
+        game_uid = self.dm.assign_game_uid(user_id)
+        self.dm.update_pet(user_id, game_uid=game_uid)
+        return f"✅ 注册成功！你的游戏用户ID是：{game_uid}\n其他人可以通过「/战斗 {game_uid}」来挑战你！"
 
     # ── Rename ──
 
@@ -226,8 +311,10 @@ class PetGame:
             [{"text": "🧬 属性详情", "command": "/属性"},
              {"text": "💪 训练", "command": "/训练"}],
         ]
-        return await self._build_pet_message(result, "evolve", title, tip, rows,
-                                             old_pet=old_pet)
+        msg = await self._build_pet_message(result, title, tip, rows,
+                                            old_pet=old_pet)
+        asyncio.create_task(self._pre_generate_screenshot(result))
+        return msg
 
     # ── Training ──
 
@@ -247,13 +334,13 @@ class PetGame:
             return "❌ 开始训练失败。"
 
         exp_10min = calc_training_exp(pet.level, 10)
-        title = f"💪 {pet.species_name} 开始训练"
+        title = f"💪 {pet.species_name}({pet.game_uid}) 开始训练"
         tip = f"最少10分钟 | 预计{exp_10min}经验 | 训练越长经验越多"
         rows = [
             [{"text": "🛌 结束训练", "command": "/休息"}],
             [{"text": "🧬 属性详情", "command": "/属性"}],
         ]
-        return await self._build_pet_message(result, "training", title, tip, rows)
+        return await self._build_pet_message(result, title, tip, rows)
 
     async def end_training(self, user_id: str) -> str | dict:
         """结束训练，生成截图+按钮消息。"""
@@ -286,18 +373,27 @@ class PetGame:
         elif result.evolution_stage == 1 and result.level >= 59:
             gate_info = " ⚠️ 可进化"
 
-        title = f"🛌 {result.species_name} 训练结束"
+        title = f"🛌 {result.species_name}({result.game_uid}) 训练结束"
         tip = f"训练{minutes}分钟 | 获得{exp_gained}经验{level_info}{gate_info}"
         rows = [
             [{"text": "🧬 属性详情", "command": "/属性"},
              {"text": "💪 再训练", "command": "/训练"}],
         ]
-        return await self._build_pet_message(result, "training", title, tip, rows)
+        msg = await self._build_pet_message(result, title, tip, rows)
+        asyncio.create_task(self._pre_generate_screenshot(result))
+        return msg
 
     # ── PvP Battle ──
 
-    def battle_pvp(self, challenger_id: str, target_id: str) -> str:
-        """PvP battle between two users."""
+    async def battle_pvp(self, challenger_id: str, target_id: str | None) -> str | list[str]:
+        """PvP battle between two users.
+
+        返回 list[str, str] 表示两次消息（开始提示 + 战斗结果），
+        返回 str 表示单次错误消息。
+        """
+        if not target_id:
+            return "❌ 请提供对方的游戏用户ID！\n例如：/战斗 123"
+
         if challenger_id == target_id:
             return "❌ 不能挑战自己哦！"
 
@@ -315,10 +411,10 @@ class PetGame:
         if pet_b.training:
             return "❌ 对方的宠物正在训练中，暂时无法挑战！"
 
-        # Run battle
+        start_msg = f"⚔️ {pet_a.species_name}「{pet_a.name}」 VS {pet_b.species_name}「{pet_b.name}」\n战斗开始，结果生成中..."
+
         result = battle_engine.run(pet_a.to_dict(), pet_b.to_dict())
 
-        # Grant EXP to both sides
         exp_winner = 50 * pet_a.level if result.winner else 0
         exp_loser = 20 * pet_a.level
 
@@ -333,7 +429,9 @@ class PetGame:
             self.dm.update_leaderboard(self.dm.get_pet(target_id))
             self.dm.update_leaderboard(self.dm.get_pet(challenger_id))
 
-        return format_battle_report(result)
+        result_msg = format_battle_report(result)
+
+        return [start_msg, result_msg]
 
     # ── Leaderboard ──
 
@@ -369,7 +467,7 @@ class PetGame:
             "  /改名 <名>   - 给宠物改名\n"
             "  /帮助        - 显示本帮助\n\n"
             "⚔️ 战斗与成长：\n"
-            "  /战斗 @某人  - 进行PK\n"
+            "  /战斗 <游戏ID> - 进行PK(输入对方游戏用户ID)\n"
             "  /进化        - 进化宠物(Lv29/Lv59)\n"
             "  /训练        - 开始训练(10分钟以上)\n"
             "  /休息        - 结束训练领取经验\n\n"

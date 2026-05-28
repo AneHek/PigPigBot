@@ -12,19 +12,21 @@ from pathlib import Path
 logger = logging.getLogger("QQBot")
 
 
-def generate_screenshot_uuid(user_id: str, last_update: float) -> str:
-    """基于 user_id 和 last_update 生成确定性 UUID（命名空间 DNS + SHA-1）。
-    
-    只要 pet.last_update 不变，UUID 就不变，对应的截图无需重新生成。
+def generate_screenshot_uuid(user_id: str, last_update: float,
+                              scene: str = "") -> str:
+    """基于 user_id、last_update 和 scene 生成确定性 UUID。
+
+    只要 pet.last_update 和 scene 不变，UUID 就不变，对应的截图无需重新生成。
 
     Args:
         user_id: 用户 ID
         last_update: 宠物数据最后更新时间戳
+        scene: 场景标识 (adopt/stats/evolve/training)
 
     Returns:
-        确定性 UUID 字符串（格式：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）
+        确定性 UUID 字符串
     """
-    seed = f"{user_id}:{last_update}"
+    seed = f"{user_id}:{last_update}:{scene}"
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
 
 

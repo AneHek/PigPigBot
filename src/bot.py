@@ -17,6 +17,7 @@ import nacl.signing
 from src.config import config
 from src.handler import handle_message
 from src.token_manager import token_manager
+from src.data_manager import data_manager
 
 logger = logging.getLogger("QQBot")
 
@@ -122,6 +123,11 @@ class QQBot:
         self._playwright_browser = None
         self._playwright = None
 
+        # ── 截图并发控制与页面预热池 ──
+        _concurrency = config.get("image", {}).get("screenshot_concurrency", 2)
+        self._screenshot_semaphore = asyncio.Semaphore(_concurrency)
+        self._page_pool: list = []
+
         # ── 去重与防抖 ──
         self._processed_msg_ids: dict[str, float] = {}   # msg_id → 处理时间戳
         self._last_user_request: dict[str, float] = {}    # user_id → 最近请求时间戳
@@ -200,17 +206,22 @@ class QQBot:
     # 消息发送
     # ──────────────────────────────────────────────
 
-    def _build_msg_payload(self, reply, msg_id: str) -> dict:
+    def _build_msg_payload(self, reply, msg_id: str, msg_seq: int = 0) -> dict:
         """根据回复内容类型构建消息载荷"""
         if isinstance(reply, str):
-            return {
+            payload = {
                 "content": reply,
                 "msg_type": 0,
                 "msg_id": msg_id,
             }
+            if msg_seq > 0:
+                payload["msg_seq"] = msg_seq
+            return payload
 
         if isinstance(reply, dict):
             payload = {"msg_id": msg_id}
+            if msg_seq > 0:
+                payload["msg_seq"] = msg_seq
             if "msg_type" in reply:
                 payload.update(reply)
             else:
@@ -220,24 +231,27 @@ class QQBot:
                     payload["keyboard"] = reply["keyboard"]
             return payload
 
-        return {
+        payload = {
             "content": str(reply),
             "msg_type": 0,
             "msg_id": msg_id,
         }
+        if msg_seq > 0:
+            payload["msg_seq"] = msg_seq
+        return payload
 
     async def send_group_reply(self, group_openid: str, msg_id: str,
-                                reply) -> bool:
+                                reply, msg_seq: int = 0) -> bool:
         """回复群聊消息（支持文本和模板消息）"""
         url = f"{API_BASE}/v2/groups/{group_openid}/messages"
-        payload = self._build_msg_payload(reply, msg_id)
+        payload = self._build_msg_payload(reply, msg_id, msg_seq)
         return await self._post_api(url, payload)
 
     async def send_c2c_reply(self, user_openid: str, msg_id: str,
-                              reply) -> bool:
+                              reply, msg_seq: int = 0) -> bool:
         """回复私聊消息（支持文本和模板消息）"""
         url = f"{API_BASE}/v2/users/{user_openid}/messages"
-        payload = self._build_msg_payload(reply, msg_id)
+        payload = self._build_msg_payload(reply, msg_id, msg_seq)
         return await self._post_api(url, payload)
 
     # ──────────────────────────────────────────────
@@ -259,9 +273,17 @@ class QQBot:
 
         logger.info(f"群聊 @ 消息 | 用户: {user_name}({user_id}) | 群: {group_openid} | 内容: {content[:50]}")
 
-        reply = await handle_message(user_id, user_name, content)
+        data_manager.add_group_member(group_openid, user_id)
+
+        reply = await handle_message(user_id, user_name, content, group_id=group_openid)
         if reply:
-            await self.send_group_reply(group_openid, msg_id, reply)
+            if isinstance(reply, list):
+                for seq, msg in enumerate(reply, start=1):
+                    if seq > 1:
+                        await asyncio.sleep(1)
+                    await self.send_group_reply(group_openid, msg_id, msg, msg_seq=seq)
+            else:
+                await self.send_group_reply(group_openid, msg_id, reply)
 
     async def handle_c2c(self, data: dict):
         """处理私聊消息"""
@@ -279,7 +301,13 @@ class QQBot:
 
         reply = await handle_message(user_id, user_name, content)
         if reply:
-            await self.send_c2c_reply(user_id, msg_id, reply)
+            if isinstance(reply, list):
+                for seq, msg in enumerate(reply, start=1):
+                    if seq > 1:
+                        await asyncio.sleep(1)
+                    await self.send_c2c_reply(user_id, msg_id, msg, msg_seq=seq)
+            else:
+                await self.send_c2c_reply(user_id, msg_id, reply)
 
     # ──────────────────────────────────────────────
     # 去重 / 防抖工具
@@ -502,6 +530,19 @@ class QQBot:
             except Exception as e:
                 logger.warning(f"Playwright browser 启动失败: {e}，截图功能不可用")
 
+        # ── 预热页面池（减少首次截图延迟）──
+        if self._playwright_browser:
+            _pool_size = config.get("image", {}).get("screenshot_concurrency", 2)
+            for i in range(_pool_size):
+                try:
+                    page = await self._playwright_browser.new_page(
+                        viewport={"width": 380, "height": 800})
+                    self._page_pool.append(page)
+                except Exception as e:
+                    logger.warning(f"预热页面 {i} 失败: {e}")
+            if self._page_pool:
+                logger.info(f"📄 页面预热池就绪: {len(self._page_pool)} 个页面")
+
         # ── SSL 配置 ──
         ssl_context = self._build_ssl_context()
         protocol = "https" if ssl_context else "http"
@@ -555,6 +596,12 @@ class QQBot:
         for session in self._sessions.values():
             await session.close()
         self._sessions.clear()
+        for page in self._page_pool:
+            try:
+                await page.close()
+            except Exception:
+                pass
+        self._page_pool.clear()
         if self._playwright_browser:
             await self._playwright_browser.close()
         if self._playwright:

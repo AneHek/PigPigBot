@@ -226,7 +226,7 @@ def format_battle_stats(pet) -> str:
     q_label = quality_label(q)
 
     return (
-        f"🐷 【{pet.species_name}】 {pet.name}\n"
+        f"🐷 【{pet.species_name}】 ({pet.game_uid})\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"⭐ 品质：{q_label}({q})  |  {stage}  |  {btype}\n"
         f"📊 Lv.{pet.level}  |  EXP: {bar} {pet.exp}/{pet.max_exp}\n"

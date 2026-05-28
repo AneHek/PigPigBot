@@ -1,116 +1,171 @@
-# CODEBUDDY.md This file provides guidance to CodeBuddy when working with code in this repository.
+# QQ 宠物战斗机器人 - 项目文档
 
-## 常用命令
+## 一、技术栈
 
-```bash
-# 安装依赖
-pip install -r requirements.txt
+| 类别 | 技术 | 用途 |
+|------|------|------|
+| 语言 | Python 3.10+ | 主语言 |
+| Web 框架 | aiohttp | HTTP Webhook 服务 + 异步 API 调用 |
+| 数据库 | Redis | 宠物数据持久化、排行榜、Token 存储 |
+| 签名验证 | PyNaCl (Ed25519) | Webhook URL 验证签名 |
+| 配置解析 | PyYAML | 加载 config.yaml / bot_config.yaml |
+| 证书生成 | Cryptography | 自签名 SSL 证书自动生成 |
+| 截图引擎 | Playwright (Chromium/Edge) | HTML → PNG 截图渲染 |
+| 平台 API | QQ 开放平台 API v2 | Webhook 模式消息收发 |
 
-# 启动机器人（需先配置 bot_config.yaml 和 Redis）
+## 二、项目文件摘要
+
+| 文件 | 职责 |
+|------|------|
+| `main.py` | 入口文件。检查配置、创建 QQBot 实例、注入 game.bot 引用、启动事件循环 |
+| `src/config.py` | 配置加载模块。合并 `config.yaml` 和 `bot_config.yaml` 为全局 `config` dict |
+| `src/bot.py` | Webhook 服务核心。HTTPS 服务启动、签名验证、消息去重/防抖、事件分发、API 消息发送、Playwright 浏览器生命周期管理 |
+| `src/handler.py` | 命令路由器。解析用户消息提取命令和参数，路由到 `PetGame` 对应方法 |
+| `src/pet_game.py` | 游戏核心逻辑。领养、属性、进化、训练、战斗、排行、帮助等全部指令的业务实现 |
+| `src/data_manager.py` | 数据持久化层。`Pet` 数据模型定义、Redis CRUD 操作、排行榜、截图 UUID 管理 |
+| `src/pet_config.py` | 静态数据配置。26 种宠物定义、技能数据、成长表、进化系数、图片路径映射 |
+| `src/pet_stats.py` | 属性计算引擎。IV 生成（二项分布品质）、属性公式计算、品质评级、格式化输出 |
+| `src/battle.py` | 实时自动战斗引擎。0.1s tick 循环、伤害管线、状态效果、技能轮换、战斗报告生成 |
+| `src/image_gen.py` | HTML 渲染 + Playwright 截图。宠物信息卡片 HTML 模板、CSS 样式、HTML→PNG 转换 |
+| `src/image_lifecycle.py` | 截图生命周期管理。确定性 UUID 生成、延迟删除、启动清理、每日 0 点兜底清理 |
+| `src/msg_templates.py` | 消息模板封装。QQ 官方 Markdown 模板消息、按钮键盘消息、组合消息构建 |
+| `src/token_manager.py` | Token 管理器。QQ API access_token 获取、Redis 存储、后台定时刷新 |
+
+## 三、信息处理前置流程
+
+用户消息从 QQ 平台到最终回复的完整前置链路如下：
+
+```
+QQ 平台 (Webhook 推送)
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│  bot.py :: webhook_handler(request)                     │
+│                                                         │
+│  1. 解析 JSON 请求体                                     │
+│  2. op=13 → URL 验证：                                   │
+│     _verify_signature(event_ts, plain_token)             │
+│     → Ed25519 签名 → 返回 {plain_token, signature}      │
+│  3. op=0 → 事件分发：                                    │
+│     ├─ msg_id 去重（10s TTL）                            │
+│     ├─ user_id 防抖（2s 间隔）                           │
+│     ├─ GROUP_AT_MESSAGE_CREATE → handle_group_at()      │
+│     └─ C2C_MESSAGE_CREATE → handle_c2c()                │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│  bot.py :: handle_group_at / handle_c2c                 │
+│                                                         │
+│  1. 提取 content / user_id / user_name / msg_id         │
+│  2. [群聊] data_manager.add_group_member(group, user)   │
+│     └─ Redis SADD qqbot:group:{group_id} {user_id}     │
+│  3. 调用 handle_message(user_id, user_name, content)    │
+│  4. 获取 reply → 检测类型：                              │
+│     ├─ list → 多消息模式（战斗）：                       │
+│     │   ├─ send_reply(msg_seq=1) → 第一条消息           │
+│     │   ├─ asyncio.sleep(1) → 间隔至少 1 秒             │
+│     │   └─ send_reply(msg_seq=2) → 第二条消息           │
+│     └─ 其他 → 单消息模式：send_reply(reply)             │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│  handler.py :: handle_message(user_id, user_name, content)│
+│                                                         │
+│  1. parse_command(content) → 正则提取命令名 + 参数        │
+│     - 去除 <@!xxx> / @xxx 标记                           │
+│     - 匹配 /命令 或 ／命令 格式                           │
+│  2. 命令路由表匹配（中英文双语）                          │
+│     - /战斗 <游戏ID> → 参数作为 game_uid                 │
+│       → data_manager.get_user_by_game_uid() 反查 QQ ID  │
+│     - 匹配成功 → 调用 game.xxx() 方法                    │
+│     - 匹配失败 → 返回未知命令提示                         │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│  pet_game.py :: PetGame 方法                            │
+│                                                         │
+│  业务逻辑处理 → 可能触发截图生成                          │
+│  → 返回 str（纯文本）或 dict（Markdown+按钮消息）        │
+│  → 战斗指令返回 list[str, str]（两次消息）               │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│  bot.py :: send_group_reply / send_c2c_reply            │
+│                                                         │
+│  1. _build_msg_payload(reply, msg_id, msg_seq)          │
+│     └─ msg_seq > 0 时添加 "msg_seq" 到 POST 载荷       │
+│  2. _post_api(url, payload) → POST 到 QQ API v2         │
+│     - 从 Redis 获取 access_token (token_manager)        │
+│     - 构建 Authorization: QQBot {token} 请求头          │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 四、项目启动流程
+
+```
 python main.py
-
-# 运行全部测试
-python -m unittest discover -s test -v
-
-# 运行单个测试文件
-python -m unittest test.test_battle -v
-
-# 运行单个测试类
-python -m unittest test.test_battle.TestBattleEngine -v
-
-# 运行单个测试方法
-python -m unittest test.test_battle.TestBattleEngine.test_battle_ends_with_winner -v
+    │
+    ├─ 1. check_config()
+    │     检查 bot_config.yaml 中 app_id / secret 是否已填写
+    │
+    ├─ 2. QQBot() 实例化
+    │     初始化去重/防抖字典、Playwright 引用、
+    │     截图并发信号量 (_screenshot_semaphore)、页面预热池 (_page_pool)
+    │
+    ├─ 3. game.bot = bot
+    │     注入 bot 引用到 PetGame，使截图功能可用
+    │
+    └─ 4. await bot.start()
+          │
+          ├─ 4a. token_manager.start()
+          │      连接 Redis → 首次获取 access_token → 启动后台刷新协程
+          │
+          ├─ 4b. asyncio.create_task(_cleanup_loop())
+          │      启动去重/防抖记录过期清理协程（每 30s）
+          │
+          ├─ 4c. aiohttp web.Application 路由注册
+          │      - POST/GET /qqbot/webhook → webhook_handler
+          │      - /static/images → 静态图片服务
+          │
+          ├─ 4d. 截图目录初始化
+          │      - cleanup_orphan_files() 清理孤儿截图
+          │      - 启动每日 0 点兜底清理协程
+          │
+          ├─ 4e. Playwright 浏览器启动
+          │      优先 chromium → 失败回退 msedge → 均失败则截图不可用
+          │
+          ├─ 4e2. 页面预热池初始化
+          │       预创建 N 个 page 实例（N = screenshot_concurrency）
+          │       截图时复用预热页面，省去 new_page 开销
+          │
+          ├─ 4f. SSL 配置
+          │      force_https=true → 加载/生成自签名证书
+          │      force_https=false → HTTP 模式（配合 nginx/ngrok）
+          │
+          └─ 4g. web.TCPSite 启动
+                 监听 host:port，进入无限循环等待事件推送
 ```
 
-注意：测试不依赖真实 Redis——`test_battle.py` 和 `test_pet_stats.py` 在导入时 mock 掉 redis 模块，`test_data_manager.py` 使用自实现的 `InMemoryRedis`。
+## 五、各指令详细处理流程
 
-## 架构总览
+| 指令 | 说明 | 详细文档 |
+|------|------|----------|
+| `/领养` | 随机领养宠物（首次自动分配游戏用户ID） | [cmd_adopt.md](cmd_adopt.md) |
+| `/属性` | 查看宠物详细属性 | [cmd_stats.md](cmd_stats.md) |
+| `/遗弃` | 遗弃当前宠物 | [cmd_abandon.md](cmd_abandon.md) |
+| `/改名` | 给宠物改名 | [cmd_rename.md](cmd_rename.md) |
+| `/排行` | 查看排行榜 | [cmd_top.md](cmd_top.md) |
+| `/帮助` | 查看帮助菜单 | [cmd_help.md](cmd_help.md) |
+| `/进化` | 进化宠物 | [cmd_evolve.md](cmd_evolve.md) |
+| `/训练` | 开始挂机训练 | [cmd_train.md](cmd_train.md) |
+| `/休息` | 结束训练领取经验 | [cmd_rest.md](cmd_rest.md) |
+| `/战斗` | PvP 战斗（入参游戏用户ID） | [cmd_battle.md](cmd_battle.md) |
+| `/注册` | 生成游戏用户ID（兼容旧用户，不在帮助页显示） | — |
 
-本项目是一个 QQ 开放平台宠物战斗养成机器人，采用 **Webhook (HTTPS)** 模式，通过 aiohttp 提供 HTTP 服务接收 QQ 平台事件推送，异步调用 QQ 开放 API 回复消息。核心业务是 25 种宠物的三阶进化、IV 属性、实时自动战斗系统。
+## 六、浏览器截图流程
 
-### 数据流
-
-```
-QQ 平台 → POST /qqbot/webhook → QQBot.webhook_handler()
-  ├── op=13 → URL 验证（Ed25519 签名）
-  └── op=0  → 事件分发
-       ├── GROUP_AT_MESSAGE_CREATE → handle_group_at()
-       └── C2C_MESSAGE_CREATE → handle_c2c()
-            ↓
-       handler.handle_message() → 命令解析 + 路由
-            ↓
-       pet_game.PetGame → 业务逻辑
-            ↓
-       data_manager.DataManager → Redis 读写
-            ↓
-       QQBot.send_*_reply() → POST QQ 开放 API
-```
-
-### 模块职责
-
-**入口 & 配置层**
-
-- `main.py`：入口，检查配置、初始化 `QQBot`、启动事件循环。Windows 下显式设置 `WindowsSelectorEventLoopPolicy`。
-- `config.py`：加载 `config.yaml`（公共配置：webhook 端口、Redis、图片路径、游戏参数）和 `bot_config.yaml`（敏感凭证：app_id、secret），合并到全局 `config` dict。
-- `config.yaml`：公共配置，包含 `webhook`、`image`、`redis`、`game` 四个 section。`webhook.force_https` 控制本地是否启用 HTTPS；设为 false 时走纯 HTTP，依赖 nginx/ngrok 反向代理提供 HTTPS。
-- `bot_config.yaml`：敏感凭证，被 `.gitignore` 忽略。包含 `bot.app_id`、`bot.secret`、`bot.sandbox`。
-
-**网络 & 事件层**
-
-- `bot.py::QQBot`：核心类，管理 aiohttp web 服务器 + API 客户端。
-  - `webhook_handler()`：统一处理 POST 请求。op=13 做 Ed25519 URL 验证（用 secret 派生 32 字节种子生成签名密钥）；op=0 按事件类型分发。
-  - `_build_ssl_context()`：根据 `force_https` 决定是否加载证书，无证书时自动生成自签名证书。
-  - 消息回复通过 `_build_msg_payload()` 统一构建载荷，支持纯文本（str）和结构化消息（dict，含 msg_type、keyboard 等字段）。
-  - 图片静态文件通过 aiohttp `add_static` 挂载到 `/static/images` 路由。
-- `token_manager.py::TokenManager`：后台 asyncio task 管理 QQ 开放平台 access_token。启动时从 QQ API 获取 token 存入 Redis，定期检查剩余有效期（阈值 30 分钟）并自动刷新。bot.py 通过 `token_manager.get_token()` 读取 token 用于 API 调用。
-
-**业务逻辑层**
-
-- `handler.py`：命令解析和路由。`parse_command()` 剥除 `@!` mention 前缀后提取命令名和参数；`handle_message()` 将命令路由到 `pet_game.PetGame` 对应方法。无命令但有 @mention 时自动触发 PvP 战斗。支持中英文双语命令（如 `/领养` 与 `/adopt`）。
-- `pet_game.py::PetGame`：游戏业务逻辑。所有方法返回字符串回复（部分内部调用 `format_battle_stats` / `format_battle_report` 格式化）。关键业务：领养（随机 25 种之一，生成 IV 和属性）、进化（Lv29/Lv59 门槛）、训练（挂机 10+n 分钟）、PvP 战斗（调用 `battle_engine.run()`）、排行榜（Redis zset）。
-
-**数据层**
-
-- `data_manager.py`：Redis 数据持久化。全局 `data_manager` 单例。关键 Redis key：
-  - `qqbot:pet:{user_id}`：宠物 JSON 序列化存储
-  - `qqbot:cooldown:{user_id}`：冷却 hash（action → 到期时间戳）
-  - `qqbot:leaderboard`：zset（user_id → score=level+exp/1000）
-  - `qqbot:leaderboard:detail`：hash（user_id → 详情 JSON）
-  - `qqbot:access_token` / `qqbot:access_token_expires_at`：TokenManager 管理
-  
-- `Pet` dataclass：包含 owner 信息、物种 ID、进化阶段、6 项 IV（hp/atk/def/spd/crit/eva）、计算属性（hp/atk/def_/spd/crit/crit_dmg/eva/lifesteal）、训练状态。`update_pet()` 内含升级循环和进化门槛逻辑（stage 0 锁 Lv29，stage 1 锁 Lv59）。升级时自动调用 `calc_stats()` 重算属性。`delete_pet()` 级联删除冷却和排行榜。
-
-**战斗系统**
-
-- `battle.py`：实时 tick-based 自动战斗引擎。核心类 `BattleEngine.run()` 以 0.1s 为 tick、最长 60s 运行，每 tick 处理状态效果轮转、dot/hot 结算、技能 CD 和自动普攻。关键机制：
-  - **类型克制**：attack > defense > speed > attack（优势 15% 加成，劣势 10% 惩罚）
-  - **9 步伤害管线**：类型加成 → 暴击判定 → 闪避判定 → 护盾吸收 → 防御减伤（公式 `1 - def/(def+1000)`）→ 反伤 → 吸血
-  - **控制优先级**：stun/freeze(100) > imprison/float(80) > fear(60) > silence(40) > disarm(20) > taunt/confuse(10)
-  - 技能通过 `SkillEffect` 数据驱动执行，支持 damage、dot、hot、heal、debuff、buff、control、shield、reflect、true_damage、crit_guaranteed、purify、interrupt、confuse、auto_skill 共 15 种效果类型
-  - `format_battle_report()`：输出战斗结果和最后 10 个事件日志
-
-- `pet_config.py`：26 种宠物（P001~P026）的完整数据定义。新增 P025 粉红猪系（占位），原 P025 仙猪萌系后移为 P026。包含 `get_pet_image_url()` 图片映射函数，公式 `pig_index = 77 - ((num-1)*3 + stage)`。
-  
-- `pet_stats.py`：属性计算模块。IV 生成通过二项分布 Binomial(5,0.5) 先决定品质档位（E~S），再在档位IV总和范围内生成6项IV。`QUALITY_RANGES` 和 `QUALITY_INDEX_TO_LABEL` 统一品质判定。IV 修正系数 `f = 0.75 + (IV/31) × 0.5`；最终属性公式 `base_init × f + per_level × f × E × (level - 1)`。
-
-**消息模板层**
-
-- `msg_templates.py`：封装 QQ 官方 Markdown 模板和按钮列表。`build_markdown_msg()` 使用自定义 template_id；`build_button_list_msg()` 支持自由行列布局；`build_markdown_with_buttons()` 组合 markdown+keyboard 为完整消息 dict。
-
-**图片服务层**
-
-- `image_gen.py`：HTML 渲染和 Playwright 截图。`render_pet_html()` 支持5种场景(adopt/status/stats/evolve/training)的宠物信息HTML模板，含宠物形象 `<img>` 标签。`html_to_image()` 通过 headless chromium/msedge 截图输出PNG。
-- `image_lifecycle.py`：截图生命周期管理。`schedule_deletion()` 异步延迟60秒删除文件；`cleanup_orphan_files()` 启动时清理 screenshots 目录孤儿文件。
-- 图片映射：`get_pet_image_url()` 将 species_id+stage 映射到 `cropped_pigs1/2` 目录的 `pig_0~pig_77.png`，倒序对应 pig.md 表格中78个名字。
-
-### 配置双文件设计
-
-敏感凭证（app_id、secret）存储在 `bot_config.yaml`，公共配置（端口、Redis、游戏参数）存储在 `config.yaml`，两者在 `config.py` 中合并。`bot_config.yaml` 通过 `.gitignore` 排除，防止意外提交。
-
-### Redis 依赖
-
-所有持久化依赖 Redis，包括宠物数据、排行榜、冷却时间、access_token。测试中 mock 掉 redis 模块以实现无 Redis 环境的单元测试。
-
-### 新增战斗系统经验奖励
-
-PvP 战斗胜者获得 `50 × 胜者等级` 经验，败者获得 `20 × 挑战者等级` 经验，双方均更新排行榜。
+截图系统的完整技术流程详见：[screenshot_flow.md](screenshot_flow.md)

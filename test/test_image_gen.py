@@ -41,57 +41,54 @@ class TestImageGen(unittest.TestCase):
         )
 
     def test_render_pet_html_status(self):
-        """render_pet_html(status) 使用基础模板（与stats合并）"""
+        """render_pet_html 包含宠物名和属性"""
         from src.image_gen import render_pet_html
         pet = self._make_pet()
-        html = render_pet_html(pet, "status", "http://example.com/img.png")
+        html = render_pet_html(pet, "http://example.com/img.png")
         self.assertIn("测试猪", html)
         self.assertIn('<img class="pet-img"', html)
-        self.assertIn("http://example.com/img.png", html)
         self.assertIn("520", html)  # HP
         self.assertIn("65", html)   # ATK
 
     def test_render_pet_html_stats(self):
-        """render_pet_html(stats) 包含IV进度条和IV数字"""
+        """render_pet_html 包含IV进度条"""
         from src.image_gen import render_pet_html
         pet = self._make_pet()
-        html = render_pet_html(pet, "stats", "http://example.com/img.png")
-        self.assertIn("iv-fill", html)   # IV进度条（不显示数值）
+        html = render_pet_html(pet, "http://example.com/img.png")
+        self.assertIn("iv-fill", html)
 
     def test_render_pet_html_adopt(self):
-        """render_pet_html(adopt) 使用与stats相同的基础模板，不含改名提示"""
+        """render_pet_html 不含改名提示（已移到tip）"""
         from src.image_gen import render_pet_html
         pet = self._make_pet()
-        html = render_pet_html(pet, "adopt", "http://example.com/img.png")
+        html = render_pet_html(pet, "http://example.com/img.png")
         self.assertIn("测试猪", html)
-        self.assertNotIn("/改名", html)  # 改名提示移到tip
+        self.assertNotIn("/改名", html)
 
     def test_render_pet_html_evolve(self):
-        """render_pet_html(evolve) 含进化信息和属性变化预览"""
+        """render_pet_html 含属性变化预览（old_pet）"""
         from src.image_gen import render_pet_html
         pet = self._make_pet(evo=1, level=30)
-        # 构造旧宠物用于预览
         old = self._make_pet(evo=0, level=29, name="旧猪")
         old.hp, old.atk, old.def_, old.spd = 400, 50, 14, 0.50
-        html = render_pet_html(pet, "evolve", "http://example.com/img.png",
+        html = render_pet_html(pet, "http://example.com/img.png",
                                old_pet=old)
         self.assertIn("二阶", html)
-        self.assertIn("进化完成", html)
-        self.assertIn("→", html)  # 属性变化箭头
+        self.assertIn("→", html)
 
-    def test_render_pet_html_training(self):
-        """render_pet_html(training) 场景"""
+    def test_render_pet_html_skill_section(self):
+        """render_pet_html 包含技能信息区域"""
         from src.image_gen import render_pet_html
         pet = self._make_pet()
-        pet.training = True
-        html = render_pet_html(pet, "training", "http://example.com/img.png")
-        self.assertIn("训练中", html)
+        html = render_pet_html(pet, "http://example.com/img.png")
+        self.assertIn("skill-section", html)
+        self.assertIn("技能按阶段", html)
 
     def test_html_content_validity(self):
         """HTML 以 <!DOCTYPE html> 开头"""
         from src.image_gen import render_pet_html
         pet = self._make_pet()
-        html = render_pet_html(pet, "stats", "http://example.com/img.png")
+        html = render_pet_html(pet, "http://example.com/img.png")
         self.assertTrue(html.strip().startswith("<!DOCTYPE html>"))
 
 
@@ -151,16 +148,15 @@ class TestImageGeneration(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "test_output.png"
 
-            # 构造 mock browser，让 screenshot 实际写入文件
             mock_page = AsyncMock()
-            mock_page.evaluate.return_value = 500  # body_height
+            mock_page.evaluate.return_value = 500
 
             async def _fake_screenshot(path, full_page=False):
                 Path(path).write_bytes(b"\x89PNG\r\n\x1a\nfake_png_data")
 
-            mock_page.screenshot = _fake_screenshot  # sync 赋值（非 async 也可正常调用）
+            mock_page.screenshot = _fake_screenshot
             mock_page.set_viewport_size = AsyncMock()
-            mock_page.goto = AsyncMock()  # 替代 set_content
+            mock_page.set_content = AsyncMock()
             mock_page.close = AsyncMock()
 
             mock_browser = AsyncMock()
@@ -168,7 +164,6 @@ class TestImageGeneration(unittest.IsolatedAsyncioTestCase):
 
             await html_to_image(mock_browser, "<html></html>", output)
 
-            # 验证文件确实被创建
             self.assertTrue(output.exists(), "截图文件应被创建")
             self.assertGreater(output.stat().st_size, 0, "文件不应为空")
 
@@ -191,7 +186,7 @@ class TestImageGeneration(unittest.IsolatedAsyncioTestCase):
 
             mock_page.screenshot = _fake_screenshot
             mock_page.set_viewport_size = AsyncMock()
-            mock_page.goto = AsyncMock()  # 替代 set_content
+            mock_page.set_content = AsyncMock()
             mock_page.close = AsyncMock()
 
             mock_browser = AsyncMock()
@@ -342,6 +337,7 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
     async def _gen_and_verify(self, pet, scene: str, image_url: str,
                                old_pet=None, tag: str = ""):
         """公用：渲染HTML→写出HTML文件→截图PNG→验证两个文件都存在"""
+        import base64
         from src.image_gen import render_pet_html, html_to_image
 
         suffix = f"_{tag}" if tag else ""
@@ -349,7 +345,6 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
         html_path = self.screenshots_dir / f"{base_name}.html"
         png_path = self.screenshots_dir / f"{base_name}.png"
 
-        # 从 image_url 推算本地绝对路径
         local_image_path = ""
         marker = "/static/images/"
         idx = image_url.find(marker)
@@ -359,8 +354,14 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
             if local.exists():
                 local_image_path = str(local.resolve())
 
-        html = render_pet_html(pet, scene, image_url, local_image_path,
-                               old_pet=old_pet)
+        base64_image = ""
+        if local_image_path and Path(local_image_path).exists():
+            img_bytes = Path(local_image_path).read_bytes()
+            b64 = base64.b64encode(img_bytes).decode("ascii")
+            base64_image = f"data:image/png;base64,{b64}"
+
+        html = render_pet_html(pet, image_url, local_image_path,
+                               old_pet=old_pet, base64_image=base64_image)
         html_path.write_text(html, encoding="utf-8")
         self.assertTrue(html_path.exists(), f"HTML 文件应被创建: {html_path}")
         self.assertGreater(html_path.stat().st_size, 100)

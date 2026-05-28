@@ -28,6 +28,10 @@ KEY_PET = "qqbot:pet:{user_id}"
 KEY_COOLDOWN = "qqbot:cooldown:{user_id}"
 KEY_LEADERBOARD = "qqbot:leaderboard"
 KEY_SCREENSHOT = "qqbot:screenshot:{user_id}"
+KEY_GROUP_MEMBERS = "qqbot:group:{group_id}"
+KEY_GAME_UID_COUNTER = "qqbot:game_uid_counter"
+KEY_GAME_UID_MAP = "qqbot:game_uid:{game_uid}"
+KEY_USER_GAME_UID = "qqbot:user_game_uid:{user_id}"
 
 # Ensure image directory exists
 _IMAGE_DIR = Path(__file__).parent.parent / config["image"]["dir"]
@@ -72,6 +76,9 @@ class Pet:
     # ── Training state ──
     training: bool = False
     training_start: float = 0.0
+
+    # ── Game user ID ──
+    game_uid: int = 0
 
     @property
     def iv_dict(self) -> dict[str, int]:
@@ -246,7 +253,10 @@ class DataManager:
     # ── Evolution ──
 
     def evolve_pet(self, user_id: str) -> Optional[Pet]:
-        """Evolve pet if at gate level. Returns updated pet or None."""
+        """Evolve pet if at gate level. Returns updated pet or None.
+
+        进化后保留多余经验并继续升级，若宠物名等于旧种族名则同步更新为新种族名。
+        """
         pet = self.get_pet(user_id)
         if pet is None:
             return None
@@ -256,10 +266,32 @@ class DataManager:
         if pet.level < gate_level:
             return None
 
+        old_species_name = pet.species_name
+
         pet.evolution_stage += 1
         pet.level += 1
-        pet.exp = 0
         pet.last_update = time.time()
+
+        if pet.name == old_species_name:
+            pet.name = pet.species_name
+
+        level_up_occurred = False
+        while True:
+            if pet.evolution_stage == 0 and pet.level >= 29:
+                pet.level = 29
+                pet.exp = min(pet.exp, pet.max_exp - 1)
+                break
+            if pet.evolution_stage == 1 and pet.level >= 59:
+                pet.level = 59
+                pet.exp = min(pet.exp, pet.max_exp - 1)
+                break
+
+            if pet.exp < pet.max_exp:
+                break
+
+            pet.exp -= pet.max_exp
+            pet.level += 1
+            level_up_occurred = True
 
         from src.pet_stats import calc_stats
         stats = calc_stats(pet.species_id, pet.evolution_stage,
@@ -371,6 +403,33 @@ class DataManager:
                 entry["evolution_stage"] = int(entry["evolution_stage"])
                 results.append(entry)
         return results
+
+    # ── Group members ──
+
+    def add_group_member(self, group_id: str, user_id: str) -> None:
+        """记录群组ID和用户ID关系（SET表）"""
+        _redis_client.sadd(KEY_GROUP_MEMBERS.format(group_id=group_id), user_id)
+
+    # ── Game UID ──
+
+    def get_user_game_uid(self, user_id: str) -> int:
+        """获取用户的游戏用户ID，不存在返回0"""
+        val = _redis_client.get(KEY_USER_GAME_UID.format(user_id=user_id))
+        return int(val) if val else 0
+
+    def assign_game_uid(self, user_id: str) -> int:
+        """为用户分配游戏用户ID（原子递增），已存在则返回现有"""
+        existing = self.get_user_game_uid(user_id)
+        if existing > 0:
+            return existing
+        game_uid = _redis_client.incr(KEY_GAME_UID_COUNTER)
+        _redis_client.set(KEY_USER_GAME_UID.format(user_id=user_id), game_uid)
+        _redis_client.set(KEY_GAME_UID_MAP.format(game_uid=game_uid), user_id)
+        return game_uid
+
+    def get_user_by_game_uid(self, game_uid: int) -> str | None:
+        """通过游戏用户ID反查QQ用户ID"""
+        return _redis_client.get(KEY_GAME_UID_MAP.format(game_uid=game_uid))
 
     # ── All pets ──
 

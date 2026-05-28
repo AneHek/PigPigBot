@@ -30,11 +30,16 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
 
         mock_bot = MagicMock()
         mock_bot._playwright_browser = mock_browser
+        mock_bot._screenshot_semaphore = None
+        mock_bot._page_pool = []
 
         dm = DataManager()
         dm.has_pet = MagicMock(return_value=False)
         dm.create_pet = MagicMock()
         dm.update_leaderboard = MagicMock()
+        dm.get_user_game_uid = MagicMock(return_value=0)
+        dm.assign_game_uid = MagicMock(return_value=1)
+        dm.update_pet = MagicMock()
 
         # mock create_pet 返回有效 Pet
         from src.data_manager import Pet
@@ -134,6 +139,78 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
         result = await game.stats_detail("user1")
         self.assertIsInstance(result, str)
         self.assertIn("没有宠物", result)
+
+    async def test_register_no_pet(self):
+        """无宠物时注册返回错误"""
+        game = await self._make_game()
+        game.dm.get_pet.return_value = None
+        result = game.register("user1")
+        self.assertIsInstance(result, str)
+        self.assertIn("没有宠物", result)
+
+    async def test_register_already_registered(self):
+        """已注册时返回已有ID"""
+        game = await self._make_game()
+        game.dm.get_user_game_uid.return_value = 5
+        result = game.register("user1")
+        self.assertIsInstance(result, str)
+        self.assertIn("5", result)
+        self.assertIn("已经注册", result)
+
+    async def test_register_success(self):
+        """注册成功返回新ID"""
+        game = await self._make_game()
+        game.dm.get_user_game_uid.return_value = 0
+        game.dm.assign_game_uid.return_value = 3
+        result = game.register("user1")
+        self.assertIsInstance(result, str)
+        self.assertIn("3", result)
+        self.assertIn("注册成功", result)
+
+    async def test_battle_no_target(self):
+        """战斗无目标返回错误提示"""
+        game = await self._make_game()
+        result = await game.battle_pvp("user1", None)
+        self.assertIsInstance(result, str)
+        self.assertIn("游戏用户ID", result)
+
+    async def test_battle_returns_two_messages(self):
+        """战斗成功返回两条消息的list"""
+        game = await self._make_game()
+        from src.data_manager import Pet
+        pet_a = Pet(
+            owner_id="user1", owner_name="test",
+            name="猪A", species_id="P001", game_uid=1,
+            evolution_stage=0, battle_type="attack", level=10, exp=0,
+            iv_hp=15, iv_atk=15, iv_def=15, iv_spd=15, iv_crit=15, iv_eva=15,
+            hp=520, atk=65, def_=18, spd=0.58,
+            crit=8, crit_dmg=1.5, eva=4, lifesteal=0.05,
+        )
+        pet_b = Pet(
+            owner_id="user2", owner_name="test2",
+            name="猪B", species_id="P002", game_uid=2,
+            evolution_stage=0, battle_type="speed", level=10, exp=0,
+            iv_hp=15, iv_atk=15, iv_def=15, iv_spd=15, iv_crit=15, iv_eva=15,
+            hp=430, atk=55, def_=18, spd=0.65,
+            crit=6, crit_dmg=1.5, eva=6, lifesteal=0.05,
+        )
+
+        def get_pet_side_effect(uid):
+            if uid == "user1":
+                return pet_a
+            if uid == "user2":
+                return pet_b
+            return None
+
+        game.dm.get_pet = MagicMock(side_effect=get_pet_side_effect)
+        game.dm.add_exp = MagicMock()
+        game.dm.update_leaderboard = MagicMock()
+
+        result = await game.battle_pvp("user1", "user2")
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
+        self.assertIn("战斗开始", result[0])
+        self.assertIn("战斗结束", result[1])
 
 
 if __name__ == "__main__":
