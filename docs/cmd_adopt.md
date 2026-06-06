@@ -39,11 +39,17 @@ pet_game.py :: PetGame.adopt(user_id, user_name, _arg)
     │
     ├─ 6. self.dm.update_leaderboard(pet)
     │
-    ├─ 7. msg = await self._build_pet_message(pet, title, tip, rows)
+    ├─ 7. 构建 title / tip / rows
+    │     ├─ title: "🎉 {pet_name} 成为了你的伙伴！"
+    │     ├─ tip: "品质：{q_rating}({quality_label})  |  类型：{btype_cn}  |  游戏ID：{game_uid}  |  战力：{cp}  |  可使用「/改名」给宠物取一个喜欢的名字哦~"
+    │     │       （cp = calc_cp(pet) 计算综合战力）
+    │     └─ rows: [属性详情, 战斗] / [训练] 按钮
+    │
+    ├─ 8. msg = await self._build_pet_message(pet, title, tip, rows)
     │     └─ 调用 _generate_screenshot(pet) 生成通用截图
     │     └─ 截图流程 → 详见 screenshot_flow.md
     │
-    └─ 8. asyncio.create_task(self._pre_generate_screenshot(pet))
+    └─ 9. asyncio.create_task(self._pre_generate_screenshot(pet))
           └─ 后台预生成通用截图（fire-and-forget）
 ```
 

@@ -32,7 +32,8 @@ pet_game.py :: PetGame.stats_detail(user_id)
     │
     ├─ 4. 构建 title / tip / rows
     │     ├─ title: "{species_name}({game_uid}) 属性详情"
-    │     ├─ tip: 名字 | 品质 | IV总和 | EXP + 门槛警告
+    │     ├─ tip: "品质：{pet.quality}  |  战力：{cp}  |  IV总和:{pet.iv_sum}/186"
+    │     │       （cp = calc_cp(pet) 计算综合战力）
     │     └─ rows: [进化, 训练] / [战斗] 按钮
     │
     └─ 5. await self._build_pet_message(pet, title, tip, rows)

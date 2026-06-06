@@ -17,7 +17,7 @@ from src.data_manager import DataManager, Pet, data_manager
 logger = logging.getLogger("QQBot")
 from src.pet_config import PET_SPECIES, Skill, SkillEffect, get_pet_image_url, get_pet_image_local_path
 from src.pet_stats import (generate_ivs, generate_quality, QUALITY_INDEX_TO_LABEL,
-                           calc_stats, calc_training_exp,
+                           calc_stats, calc_training_exp, calc_cp,
                            format_battle_stats, format_iv_detail, quality_label)
 from src.battle import battle_engine, format_battle_report
 from src.config import config
@@ -220,8 +220,9 @@ class PetGame:
         btype_cn = type_names.get(battle_type, battle_type)
 
         title = f"🎉 {pet_name} 成为了你的伙伴！"
+        cp = calc_cp(pet)
         tip = (f"品质：{q_rating}({quality_label(q_rating)})  |  类型：{btype_cn}  |  "
-               f"游戏ID：{game_uid}  |  可使用「/改名」给宠物取一个喜欢的名字哦~")
+               f"游戏ID：{game_uid}  |  战力：{cp}  |  可使用「/改名」给宠物取一个喜欢的名字哦~")
         rows = [
             [{"text": "🧬 属性详情", "command": "/属性"},
              {"text": "⚔️ 战斗", "command": "/战斗"}],
@@ -249,8 +250,8 @@ class PetGame:
             gate_info = " | ⚠️ 已达59级上限，需要进化"
 
         title = f"{pet.species_name}({pet.game_uid}) 属性详情"
-        tip = (f"{pet.name} | 品质:{pet.quality}({quality_label(pet.quality)})"
-               f" | IV总和:{pet.iv_sum}/186 | EXP:{pet.exp}/{pet.max_exp}{gate_info}")
+        cp = calc_cp(pet)
+        tip = f"品质：{pet.quality}  |  战力：{cp}  |  IV总和:{pet.iv_sum}/186"
         rows = [
             [{"text": "🔮 进化", "command": "/进化"},
              {"text": "💪 训练", "command": "/训练"}],
@@ -338,7 +339,10 @@ class PetGame:
     # ── Training ──
 
     async def start_training(self, user_id: str) -> str | dict:
-        """开始训练，生成截图+按钮消息（展示当前状态）。"""
+        """开始训练，返回文本+按钮消息。"""
+        from datetime import datetime, timedelta
+        from src.msg_templates import build_button_list_msg
+
         pet = self.dm.get_pet(user_id)
         if pet is None:
             return "❌ 你还没有宠物！使用「/领养」来领养一只猪吧~"
@@ -353,13 +357,14 @@ class PetGame:
             return "❌ 开始训练失败。"
 
         exp_10min = calc_training_exp(pet.level, 10)
-        title = f"💪 {pet.species_name}({pet.game_uid}) 开始训练"
-        tip = f"最少10分钟 | 预计{exp_10min}经验 | 训练越长经验越多"
+        rest_time = datetime.now() + timedelta(minutes=10)
+        time_str = rest_time.strftime("%H:%M")
+        content = f"💪 开始训练！\n🕓  预计获得{exp_10min}经验(10分钟)。\n⚠  训练时间越长经验越多\n🗨  休息指令可用时间：{time_str}"
         rows = [
             [{"text": "🛌 结束训练", "command": "/休息"}],
             [{"text": "🧬 属性详情", "command": "/属性"}],
         ]
-        return await self._build_pet_message(result, title, tip, rows)
+        return build_button_list_msg(content, rows)
 
     async def end_training(self, user_id: str) -> str | dict:
         """结束训练，生成截图+按钮消息。"""
@@ -393,7 +398,11 @@ class PetGame:
             gate_info = " ⚠️ 可进化"
 
         title = f"🛌 {result.species_name}({result.game_uid}) 训练结束"
-        tip = f"训练{minutes}分钟 | 获得{exp_gained}经验{level_info}{gate_info}"
+        # tip: {原有等级}->{现有等级}|{战力}
+        old_level = pet.level
+        new_level = result.level
+        cp = calc_cp(result)
+        tip = f"训练{minutes}分钟 | Lv.{old_level}->Lv.{new_level}  |  战力：{cp}"
         rows = [
             [{"text": "🧬 属性详情", "command": "/属性"},
              {"text": "💪 再训练", "command": "/训练"}],

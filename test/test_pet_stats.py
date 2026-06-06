@@ -286,5 +286,36 @@ class TestQualityRating(unittest.TestCase):
         self.assertEqual(quality_label("E"), "普通")
 
 
+class TestCalcCP(unittest.TestCase):
+    """Test Combat Power calculation."""
+
+    def _make_mock_pet(self, hp=520, atk=65, def_=18, spd=0.58, crit=8, eva=4):
+        """Create a mock object with pet-like attributes."""
+        from types import SimpleNamespace
+        return SimpleNamespace(hp=hp, atk=atk, def_=def_, spd=spd, crit=crit, eva=eva)
+
+    def test_calc_cp_baseline(self):
+        """P001 attack type Lv1: baseline CP."""
+        from src.pet_stats import calc_cp
+        pet = self._make_mock_pet(hp=520, atk=65, def_=18, spd=0.58, crit=8, eva=4)
+        cp = calc_cp(pet)
+        # CP = 520*0.05 + 65*2 + 18*1.5 + 0.58*800 + 8*15 + 4*12
+        #   = 26 + 130 + 27 + 464 + 120 + 48 = 815
+        self.assertEqual(cp, 815)
+
+    def test_calc_cp_higher_stats_gives_higher_cp(self):
+        """Higher stats yield higher CP."""
+        from src.pet_stats import calc_cp
+        pet_low = self._make_mock_pet(hp=300, atk=30, def_=10, spd=0.2, crit=2, eva=1)
+        pet_high = self._make_mock_pet(hp=1000, atk=200, def_=100, spd=1.5, crit=50, eva=30)
+        self.assertGreater(calc_cp(pet_high), calc_cp(pet_low))
+
+    def test_calc_cp_is_int(self):
+        """CP should be an integer."""
+        from src.pet_stats import calc_cp
+        pet = self._make_mock_pet()
+        self.assertIsInstance(calc_cp(pet), int)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

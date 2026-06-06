@@ -196,6 +196,23 @@ def quality_rating(ivs: dict[str, int]) -> str:
     return "E"  # fallback
 
 
+def calc_cp(pet) -> int:
+    """计算综合战斗力 CP（Combat Power）。
+
+    Formula: CP = HP×0.05 + ATK×2 + DEF×1.5 + SPD×800 + CRIT%×15 + EVA%×12
+    参见 gameplay.md §一.1 注脚。
+
+    Args:
+        pet: Pet 数据对象
+
+    Returns:
+        四舍五入的整数 CP
+    """
+    cp = (pet.hp * 0.05 + pet.atk * 2 + getattr(pet, 'def_', 0) * 1.5 +
+          pet.spd * 800 + pet.crit * 15 + pet.eva * 12)
+    return int(round(cp))
+
+
 def quality_label(quality: str) -> str:
     """Chinese label for quality."""
     labels = {"S": "传说", "A": "卓越", "B": "优秀", "C": "不错", "D": "一般", "E": "普通"}

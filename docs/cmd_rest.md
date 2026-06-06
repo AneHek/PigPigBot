@@ -48,8 +48,11 @@ pet_game.py :: PetGame.end_training(user_id)
     │     └─ 刷新排行榜
     │
     ├─ 6. 构建回复信息
-    │     ├─ 检测升级: result.level > pet.level → "Lv.X→Lv.Y"
-    │     └─ 检测可进化: level 达到门槛 → "可进化" 警告
+    │     ├─ title: "🛌 {species_name}({game_uid}) 训练结束"
+    │     ├─ tip: "训练{minutes}分钟 | Lv.{old_level}->Lv.{new_level}  |  战力：{cp}"
+    │     │       （cp = calc_cp(result) 计算综合战力）
+    │     └─ 检测升级: result.level > pet.level → 标题中展示等级变化
+    │     └─ 检测可进化: level 达到门槛 → 标题中追加 "可进化" 警告
     │
     ├─ 7. msg = await self._build_pet_message(result, title, tip, rows)
     │     └─ title: "🛌 {species_name}({game_uid}) 训练结束"

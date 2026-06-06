@@ -112,8 +112,8 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, dict)
         self.assertIn("markdown", result)
 
-    async def test_start_training_returns_dict(self):
-        """开始训练返回 dict"""
+    async def test_start_training_returns_text_with_keyboard(self):
+        """开始训练返回 文本+按钮（不再是 Markdown）"""
         game = await self._make_game()
         game.dm.start_training = MagicMock()
         from src.data_manager import Pet
@@ -130,7 +130,10 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
 
         result = await game.start_training("user1")
         self.assertIsInstance(result, dict)
-        self.assertIn("markdown", result)
+        self.assertEqual(result.get("msg_type"), 0, "训练应返回文本消息 msg_type=0")
+        self.assertIn("content", result, "训练应包含 content 字段")
+        self.assertIn("keyboard", result, "训练应包含 keyboard 按钮")
+        self.assertIn("开始训练", result["content"])
 
     async def test_no_pet_returns_string(self):
         """无宠物时返回文本错误消息"""

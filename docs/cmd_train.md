@@ -2,7 +2,7 @@
 
 ## 概述
 
-开始挂机训练，记录训练开始时间。最少训练 10 分钟后才能通过 `/休息` 领取经验。返回截图+按钮消息。
+开始挂机训练，记录训练开始时间。最少训练 10 分钟后才能通过 `/休息` 领取经验。返回文本+按钮消息（不再使用 Markdown 模板/截图）。
 
 ## 调用链路
 
@@ -36,11 +36,11 @@ pet_game.py :: PetGame.start_training(user_id)
     │        └─ 公式: 50 * level * minutes
     │        └─ 计算 10 分钟预计获得经验
     │
-    └─ 5. await self._build_pet_message(result, title, tip, rows)
-          └─ title: "💪 {species_name}({game_uid}) 开始训练"
-          └─ 调用 _generate_screenshot(result) 生成通用截图
-          └─ 截图流程 → 详见 screenshot_flow.md
-          └─ 返回 dict (msg_type=2, markdown, keyboard)
+    └─ 5. build_button_list_msg(content, rows)
+          ├─ content: "💪 开始训练！\n🕓  预计获得{exp}经验(10分钟)。\n⚠  训练时间越长经验越多\n🗨  休息指令可用时间：{HH:MM}"
+          │           （HH:MM = 当前时间 + 10 分钟）
+          ├─ rows: [结束训练] / [属性详情] 按钮
+          └─ 返回 dict (msg_type=0, content, keyboard)
 ```
 
 ## 涉及函数清单
@@ -50,5 +50,4 @@ pet_game.py :: PetGame.start_training(user_id)
 | `get_pet()` | data_manager.py | 获取宠物数据 |
 | `start_training()` | data_manager.py | 设置训练状态、记录开始时间 |
 | `calc_training_exp()` | pet_stats.py | 计算训练经验公式 |
-| `_generate_screenshot()` | pet_game.py | 截图核心：缓存/渲染/截图/并发控制 |
-| `_build_pet_message()` | pet_game.py | 调用截图核心 + 构建消息 |
+| `build_button_list_msg()` | msg_templates.py | 构建文本+按钮消息（代替 Markdown 模板） |
