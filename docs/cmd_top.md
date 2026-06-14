@@ -12,13 +12,13 @@
     ▼
 handler.py :: handle_message()
     │  parse_command("/排行") → cmd="排行", arg=""
-    │  handlers["排行"] → game.top()
+    │  get_handler("排行") → LeaderboardMixin.top  (装饰器注册)
     │
     ▼
-pet_game.py :: PetGame.top()
+game/leaderboard.py :: LeaderboardMixin.top(user_id, user_name, arg, group_id)
     │
     ├─ 1. self.dm.get_leaderboard(10)
-    │     └─ data_manager.py :: DataManager.get_leaderboard()
+    │     └─ data/leaderboard.py :: LeaderboardMixin.get_leaderboard()
     │        ├─ Redis ZREVRANGE qqbot:leaderboard 0 9
     │        │   → 按分数降序取前 10 个 user_id
     │        └─ 逐个 Redis HGET qqbot:leaderboard:detail {uid}
@@ -37,4 +37,4 @@ pet_game.py :: PetGame.top()
 
 | 函数 | 文件 | 作用 |
 |------|------|------|
-| `get_leaderboard()` | data_manager.py | 从 Redis 获取 TOP N 排行数据 |
+| `get_leaderboard()` | data/leaderboard.py | 从 Redis 获取 TOP N 排行数据 |

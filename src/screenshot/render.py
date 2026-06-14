@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from copy import deepcopy
 
-from src.data_manager import Pet
+from src.data.models import Pet
 
 logger = logging.getLogger("QQBot")
 
@@ -272,7 +272,7 @@ def _resolve_image_src(local_image_path: str, image_url: str) -> str:
 
 def _skill_section_html(pet: Pet) -> str:
     """生成技能信息区域HTML（左右布局，右侧技能上下排列带↓箭头）"""
-    from src.pet_config import PET_SPECIES
+    from src.pet.config import PET_SPECIES
 
     stage_labels = ["一", "二", "三"]
     species = PET_SPECIES.get(pet.species_id, {})
@@ -398,7 +398,7 @@ def render_pet_html(pet: Pet, image_url: str,
 
 
 async def html_to_image(browser, html_str: str, output_path: Path,
-                        page=None) -> None:
+                        page=None, padding: int = 8) -> None:
     """使用Playwright将HTML字符串渲染为PNG截图。
 
     通过 page.set_content() 直接注入 HTML，配合 base64 data URI 图片，
@@ -409,6 +409,7 @@ async def html_to_image(browser, html_str: str, output_path: Path,
         html_str: 完整的HTML字符串（图片应使用 base64 data URI）
         output_path: 输出PNG文件路径
         page: 可选的预热页面，传入则复用（不关闭），否则新建并关闭
+        padding: 截图底部额外留白像素，默认 8
     """
     import time as _time
     start = _time.time()
@@ -419,7 +420,7 @@ async def html_to_image(browser, html_str: str, output_path: Path,
     try:
         await page.set_content(html_str, wait_until="load")
         body_height = await page.evaluate("document.body.scrollHeight")
-        await page.set_viewport_size({"width": 380, "height": body_height + 8})
+        await page.set_viewport_size({"width": 380, "height": body_height + padding})
         await page.screenshot(path=str(output_path), full_page=True)
         elapsed = _time.time() - start
         logger.info(f"截图生成: {output_path.name} ({elapsed:.2f}s)")

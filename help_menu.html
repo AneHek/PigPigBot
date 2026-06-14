@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 380px;
+    font-family: "Microsoft YaHei", sans-serif;
+    background: #ffffff;
+    color: #333;
+}
+.card {
+    background-color: #ffffff;
+    overflow: hidden;
+    width: 380px;
+}
+.cols {
+    display: flex; gap: 0;
+}
+.col {
+    flex: 1; min-width: 0;
+}
+.col:first-child {
+    border-right: 1px solid #eef1f5;
+}
+.section {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f1f5f9;
+}
+.section-title {
+    font-size: 14px; font-weight: bold; color: #1e293b;
+    margin-bottom: 4px;
+}
+.cmd-row {
+    padding: 2px 0; font-size: 13px; line-height: 1.5;
+}
+.cmd-name {
+    color: #2563eb; font-weight: 600;
+}
+.cmd-desc {
+    color: #94a3b8; font-size: 12px;
+}
+.footer {
+    text-align: center; padding: 8px; font-size: 11px;
+    color: #cbd5e1; border-top: 1px solid #f1f5f9;
+}
+</style></head>
+<body><div class="card">
+
+<div class="cols">
+<div class="col">
+
+<div class="section">
+    <div class="section-title">📋 基础命令</div>
+    <div class="cmd-row"><span class="cmd-name">/领养</span> <span class="cmd-desc">随机领养宠物</span></div>
+    <div class="cmd-row"><span class="cmd-name">/属性</span> <span class="cmd-desc">查看属性(含IV)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/遗弃</span> <span class="cmd-desc">遗弃当前宠物</span></div>
+    <div class="cmd-row"><span class="cmd-name">/改名</span> <span class="cmd-desc">给宠物改名</span></div>
+</div>
+
+<div class="section">
+    <div class="section-title">⚔️ 战斗与成长</div>
+    <div class="cmd-row"><span class="cmd-name">/战斗 &lt;ID&gt;</span> <span class="cmd-desc">进行PK</span></div>
+    <div class="cmd-row"><span class="cmd-name">/进化</span> <span class="cmd-desc">进化(Lv29/59)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/训练</span> <span class="cmd-desc">开始训练(10min+)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/休息</span> <span class="cmd-desc">结束训练领经验</span></div>
+</div>
+
+<div class="section">
+    <div class="section-title">🏰 副本系统</div>
+    <div class="cmd-row"><span class="cmd-name">/副本</span> <span class="cmd-desc">副本总览(7章)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/副本 N M</span> <span class="cmd-desc">挑战N章M关</span></div>
+    <div class="cmd-row"><span class="cmd-name">/副本重置 N</span> <span class="cmd-desc">重置次数(10💎)</span></div>
+</div>
+
+<div class="section">
+    <div class="section-title">🐲 世界Boss</div>
+    <div class="cmd-row"><span class="cmd-name">/boss</span> <span class="cmd-desc">Boss状态</span></div>
+    <div class="cmd-row"><span class="cmd-name">/boss 攻击</span> <span class="cmd-desc">攻击(20行动力)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/boss 排行</span> <span class="cmd-desc">伤害排行</span></div>
+    <div class="cmd-row"><span class="cmd-name">/boss 奖励</span> <span class="cmd-desc">领取奖励</span></div>
+</div>
+
+<div class="section">
+    <div class="section-title">🤝 互动系统</div>
+    <div class="cmd-row"><span class="cmd-name">/喂食 &lt;ID&gt;</span> <span class="cmd-desc">喂食(2hCD)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/抚摸 &lt;ID&gt;</span> <span class="cmd-desc">抚摸(1hCD)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/玩耍 &lt;ID&gt;</span> <span class="cmd-desc">玩耍(3hCD)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/鼓励 &lt;ID&gt;</span> <span class="cmd-desc">鼓励(30mCD)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/群训练</span> <span class="cmd-desc">群内训练</span></div>
+    <div class="cmd-row"><span class="cmd-name">/亲密</span> <span class="cmd-desc">亲密度列表</span></div>
+</div>
+
+</div>
+<div class="col">
+
+<div class="section">
+    <div class="section-title">💰 经济系统</div>
+    <div class="cmd-row"><span class="cmd-name">/签到</span> <span class="cmd-desc">每日签到(7天)</span></div>
+    <div class="cmd-row"><span class="cmd-name">/商店</span> <span class="cmd-desc">查看商品</span></div>
+    <div class="cmd-row"><span class="cmd-name">/购买</span> <span class="cmd-desc">购买商品</span></div>
+    <div class="cmd-row"><span class="cmd-name">/使用</span> <span class="cmd-desc">使用消耗品</span></div>
+    <div class="cmd-row"><span class="cmd-name">/背包</span> <span class="cmd-desc">查看持有物品</span></div>
+    <div class="cmd-row"><span class="cmd-name">/行动力</span> <span class="cmd-desc">查看行动力</span></div>
+</div>
+
+<div class="section">
+    <div class="section-title">🏅 称号与活动</div>
+    <div class="cmd-row"><span class="cmd-name">/称号</span> <span class="cmd-desc">查看/装备称号</span></div>
+    <div class="cmd-row"><span class="cmd-name">/活动</span> <span class="cmd-desc">查看当前活动</span></div>
+</div>
+
+<div class="section">
+    <div class="section-title">📖 被动</div>
+    <div class="cmd-row"><span class="cmd-name">/被动</span> <span class="cmd-desc">查看已装备</span></div>
+    <div class="cmd-row"><span class="cmd-name">/被动 背包</span> <span class="cmd-desc">技能书库存</span></div>
+    <div class="cmd-row"><span class="cmd-name">/被动 装备</span> <span class="cmd-desc">装备到槽位</span></div>
+    <div class="cmd-row"><span class="cmd-name">/被动 升级</span> <span class="cmd-desc">消耗同名书升级</span></div>
+    <div class="cmd-row"><span class="cmd-name">/被动 重置</span> <span class="cmd-desc">卸下技能(5💎)</span></div>
+</div>
+
+<div class="section">
+    <div class="section-title">🏆 排行</div>
+    <div class="cmd-row"><span class="cmd-name">/排行</span> <span class="cmd-desc">查看排行榜</span></div>
+</div>
+
+</div>
+</div>
+
+<div class="footer">猪猪养成</div>
+
+</div></body></html>

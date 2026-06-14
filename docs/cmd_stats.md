@@ -12,19 +12,19 @@
     ▼
 handler.py :: handle_message()
     │  parse_command("/属性") → cmd="属性", arg=""
-    │  handlers["属性"] → game.stats_detail(user_id)
+    │  get_handler("属性") → StatsMixin.stats_detail  (装饰器注册)
     │
     ▼
-pet_game.py :: PetGame.stats_detail(user_id)
+game/stats_cmd.py :: StatsMixin.stats_detail(user_id, user_name, arg, group_id)
     │
     ├─ 1. self.dm.get_pet(user_id)
-    │     └─ data_manager.py :: DataManager.get_pet()
+    │     └─ data/pet_store.py :: PetStoreMixin.get_pet()
     │        └─ Redis GET qqbot:pet:{user_id}
     │        └─ JSON 反序列化 → Pet.from_dict()
     │        └─ 无宠物 → 返回错误提示
     │
     ├─ 2. self.dm.update_leaderboard(pet)
-    │     └─ 刷新排行榜分数
+    │     └─ data/leaderboard.py → 刷新排行榜分数
     │
     ├─ 3. 进化门槛检查
     │     ├─ stage=0 且 level>=29 → 追加 "已达29级上限，需要进化"
@@ -37,8 +37,7 @@ pet_game.py :: PetGame.stats_detail(user_id)
     │     └─ rows: [进化, 训练] / [战斗] 按钮
     │
     └─ 5. await self._build_pet_message(pet, title, tip, rows)
-          └─ title: "{species_name}({game_uid}) 属性详情"
-          └─ 调用 _generate_screenshot(pet) 生成通用截图
+          └─ game/base.py → 调用 _generate_screenshot(pet) 生成通用截图
           └─ 若被 adopt/evolve/end_training 预生成过 → 缓存命中，~0ms
           └─ 若未预生成 → 实时截图，~170ms
           └─ 截图流程 → 详见 screenshot_flow.md
@@ -57,8 +56,8 @@ pet_game.py :: PetGame.stats_detail(user_id)
 
 | 函数 | 文件 | 作用 |
 |------|------|------|
-| `get_pet()` | data_manager.py | 从 Redis 读取宠物数据 |
-| `update_leaderboard()` | data_manager.py | 刷新排行榜 |
-| `quality_label()` | pet_stats.py | 品质字母→中文标签 |
-| `_generate_screenshot()` | pet_game.py | 截图核心：缓存/渲染/截图/并发控制 |
-| `_build_pet_message()` | pet_game.py | 调用截图核心 + 构建消息 |
+| `get_pet()` | data/pet_store.py | 从 Redis 读取宠物数据 |
+| `update_leaderboard()` | data/leaderboard.py | 刷新排行榜 |
+| `quality_label()` | pet/stats.py | 品质字母→中文标签 |
+| `_generate_screenshot()` | game/base.py | 截图核心：缓存/渲染/截图/并发控制 |
+| `_build_pet_message()` | game/base.py | 调用截图核心 + 构建消息 |

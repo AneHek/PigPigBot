@@ -12,18 +12,18 @@
     ▼
 handler.py :: handle_message()
     │  parse_command("/遗弃") → cmd="遗弃", arg=""
-    │  handlers["遗弃"] → game.abandon(user_id)
+    │  get_handler("遗弃") → ManageMixin.abandon  (装饰器注册)
     │
     ▼
-pet_game.py :: PetGame.abandon(user_id)
+game/manage.py :: ManageMixin.abandon(user_id, user_name, arg, group_id)
     │
     ├─ 1. self.dm.get_pet(user_id)
-    │     └─ 无宠物 → 返回 "你还没有宠物"
+    │     └─ data/pet_store.py → 无宠物 → 返回 "你还没有宠物"
     │
     ├─ 2. 记录 pet.name 用于回复文本
     │
     └─ 3. self.dm.delete_pet(user_id)
-          └─ data_manager.py :: DataManager.delete_pet()
+          └─ data/pet_store.py :: PetStoreMixin.delete_pet()
              ├─ Redis EXISTS qqbot:pet:{user_id}
              ├─ Redis DEL qqbot:pet:{user_id}
              ├─ Redis DEL qqbot:cooldown:{user_id}
@@ -34,5 +34,5 @@ pet_game.py :: PetGame.abandon(user_id)
 
 | 函数 | 文件 | 作用 |
 |------|------|------|
-| `get_pet()` | data_manager.py | 检查宠物是否存在 |
-| `delete_pet()` | data_manager.py | 删除宠物+冷却+排行榜数据 |
+| `get_pet()` | data/pet_store.py | 检查宠物是否存在 |
+| `delete_pet()` | data/pet_store.py | 删除宠物+冷却+排行榜数据 |

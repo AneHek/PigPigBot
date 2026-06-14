@@ -25,7 +25,7 @@ class TestImageGen(unittest.TestCase):
     def _make_pet(self, species_id="P001", evo=0, name="测试猪",
                   level=10, exp=500):
         """创建测试用 Pet 对象"""
-        from src.data_manager import Pet
+        from src.data.models import Pet
         return Pet(
             owner_id="test_user",
             owner_name="测试用户",
@@ -42,7 +42,7 @@ class TestImageGen(unittest.TestCase):
 
     def test_render_pet_html_status(self):
         """render_pet_html 包含宠物名和属性"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         html = render_pet_html(pet, "http://example.com/img.png")
         self.assertIn("测试猪", html)
@@ -52,14 +52,14 @@ class TestImageGen(unittest.TestCase):
 
     def test_render_pet_html_stats(self):
         """render_pet_html 包含IV进度条"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         html = render_pet_html(pet, "http://example.com/img.png")
         self.assertIn("iv-fill", html)
 
     def test_render_pet_html_adopt(self):
         """render_pet_html 不含改名提示（已移到tip）"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         html = render_pet_html(pet, "http://example.com/img.png")
         self.assertIn("测试猪", html)
@@ -67,7 +67,7 @@ class TestImageGen(unittest.TestCase):
 
     def test_render_pet_html_evolve(self):
         """render_pet_html 含属性变化预览（old_pet）"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet(evo=1, level=30)
         old = self._make_pet(evo=0, level=29, name="旧猪")
         old.hp, old.atk, old.def_, old.spd = 400, 50, 14, 0.50
@@ -78,7 +78,7 @@ class TestImageGen(unittest.TestCase):
 
     def test_render_pet_html_skill_section(self):
         """render_pet_html 包含技能信息区域"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         html = render_pet_html(pet, "http://example.com/img.png")
         self.assertIn("skill-section", html)
@@ -86,7 +86,7 @@ class TestImageGen(unittest.TestCase):
 
     def test_html_content_validity(self):
         """HTML 以 <!DOCTYPE html> 开头"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         html = render_pet_html(pet, "http://example.com/img.png")
         self.assertTrue(html.strip().startswith("<!DOCTYPE html>"))
@@ -97,7 +97,7 @@ class TestImageLifecycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_schedule_deletion_deletes_file(self):
         """延迟删除在指定时间后删除文件"""
-        from src.image_lifecycle import schedule_deletion
+        from src.screenshot.lifecycle import schedule_deletion
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             path = Path(f.name)
@@ -113,14 +113,14 @@ class TestImageLifecycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_schedule_deletion_missing_file_no_error(self):
         """删除不存在的文件不抛出异常"""
-        from src.image_lifecycle import schedule_deletion
+        from src.screenshot.lifecycle import schedule_deletion
         path = Path("/tmp/nonexistent_xyz123.png")
         await schedule_deletion(path, 0)
         # 不应抛出异常
 
     def test_cleanup_orphan_files(self):
         """cleanup_orphan_files 清理目录下所有文件"""
-        from src.image_lifecycle import cleanup_orphan_files
+        from src.screenshot.lifecycle import cleanup_orphan_files
         with tempfile.TemporaryDirectory() as tmpdir:
             d = Path(tmpdir)
             (d / "a.png").write_text("a")
@@ -131,7 +131,7 @@ class TestImageLifecycle(unittest.IsolatedAsyncioTestCase):
 
     def test_cleanup_orphan_empty_dir(self):
         """清理空目录返回0"""
-        from src.image_lifecycle import cleanup_orphan_files
+        from src.screenshot.lifecycle import cleanup_orphan_files
         with tempfile.TemporaryDirectory() as tmpdir:
             count = cleanup_orphan_files(Path(tmpdir))
             self.assertEqual(count, 0)
@@ -143,7 +143,7 @@ class TestImageGeneration(unittest.IsolatedAsyncioTestCase):
 
     async def test_html_to_image_creates_file(self):
         """html_to_image 应在指定路径创建PNG文件"""
-        from src.image_gen import html_to_image
+        from src.screenshot.render import html_to_image
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "test_output.png"
@@ -169,7 +169,7 @@ class TestImageGeneration(unittest.IsolatedAsyncioTestCase):
 
     async def test_html_to_image_output_path_respected(self):
         """截图输出路径正确，文件名包含 ext"""
-        from src.image_gen import html_to_image
+        from src.screenshot.render import html_to_image
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output = Path(tmpdir) / "my_screenshot.png"
@@ -216,7 +216,7 @@ class TestFileDeletion(unittest.TestCase):
 
     def test_cleanup_orphan_deletes_all(self):
         """cleanup_orphan_files 清理目录下多个文件"""
-        from src.image_lifecycle import cleanup_orphan_files
+        from src.screenshot.lifecycle import cleanup_orphan_files
         with tempfile.TemporaryDirectory() as tmpdir:
             d = Path(tmpdir)
             files = [d / f"snap_{i}.png" for i in range(5)]
@@ -230,7 +230,7 @@ class TestFileDeletion(unittest.TestCase):
 
     def test_cleanup_orphan_handles_permission_error(self):
         """清理时单个文件失败不影响其他文件（模拟权限错误）"""
-        from src.image_lifecycle import cleanup_orphan_files
+        from src.screenshot.lifecycle import cleanup_orphan_files
         with tempfile.TemporaryDirectory() as tmpdir:
             d = Path(tmpdir)
             (d / "a.png").write_text("a")
@@ -317,7 +317,7 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
     def _make_pet(self, species_id="P001", evo=0, name="五行猪混混",
                   level=10, exp=500):
         """创建测试用 Pet 对象"""
-        from src.data_manager import Pet
+        from src.data.models import Pet
         return Pet(
             owner_id="test_user",
             owner_name="测试用户",
@@ -338,7 +338,7 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
                                old_pet=None, tag: str = ""):
         """公用：渲染HTML→写出HTML文件→截图PNG→验证两个文件都存在"""
         import base64
-        from src.image_gen import render_pet_html, html_to_image
+        from src.screenshot.render import render_pet_html, html_to_image
 
         suffix = f"_{tag}" if tag else ""
         base_name = f"test_{scene}{suffix}"
@@ -374,8 +374,8 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
     def _make_quality_pet(self, quality_index: int, species_id: str,
                           evo: int, level: int, exp: int, name: str):
         """用 calc_stats 生成正确属性的宠物"""
-        from src.data_manager import Pet
-        from src.pet_stats import calc_stats, generate_ivs
+        from src.data.models import Pet
+        from src.pet.stats import calc_stats, generate_ivs
 
         ivs = generate_ivs(quality_index)
         stats = calc_stats(species_id, evo, level, ivs)
@@ -394,18 +394,10 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
     # ── S品质 — P001 混沌猪 三阶 ──
     async def test_real_S_evolve(self):
         """S品质 P001 进化：二阶→三阶，含箭头预览"""
-        import re
-        from src.data_manager import Pet
-        from src.pet_config import _get_pig_index
-        from src.pet_stats import calc_stats, generate_ivs
+        from src.data.models import Pet
+        from src.pet.stats import calc_stats, generate_ivs
         species_id = "P001"
-        image_url = "/static/images/cropped_pigs2/pig_75.png"
-        # 验证 _get_pig_index 与硬编码图片ID一致
-        match = re.search(r"pig_(\d+)", image_url)
-        expected_idx = int(match.group(1))
-        actual_idx = _get_pig_index(species_id, 2)
-        self.assertEqual(expected_idx, actual_idx,
-                         f"{species_id} 三阶: 期望 pig_{expected_idx}, 实际 pig_{actual_idx}")
+        image_url = "/static/images/cropped_pigs2/P001_2.png"
 
         ivs = generate_ivs(5)  # S quality
         old_stats = calc_stats(species_id, 1, 59, ivs)
@@ -435,17 +427,9 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
     # ── A品质 — P008 骷髅猪 stats 场景 ──
     async def test_real_A_stats(self):
         """A品质 P008 属性详情"""
-        import re
-        from src.pet_config import _get_pig_index
         species_id = "P008"
         evo = 1
-        image_url = "/static/images/cropped_pigs2/pig_55.png"
-        # 验证 _get_pig_index 与硬编码图片ID一致
-        match = re.search(r"pig_(\d+)", image_url)
-        expected_idx = int(match.group(1))
-        actual_idx = _get_pig_index(species_id, evo)
-        self.assertEqual(expected_idx, actual_idx,
-                         f"{species_id} 二阶: 期望 pig_{expected_idx}, 实际 pig_{actual_idx}")
+        image_url = f"/static/images/cropped_pigs2/{species_id}_{evo}.png"
 
         pet = self._make_quality_pet(4, species_id, evo, 42, 3000, "骷髅猪士")
         await self._gen_and_verify(pet, "stats", image_url, tag="A")
@@ -453,18 +437,10 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
     # ── B品质 — P015 训练中 ──
     async def test_real_B_training(self):
         """B品质 P015 训练场景"""
-        import re
         import time
-        from src.pet_config import _get_pig_index
         species_id = "P015"
         evo = 1
-        image_url = "/static/images/cropped_pigs2/pig_34.png"
-        # 验证 _get_pig_index 与硬编码图片ID一致
-        match = re.search(r"pig_(\d+)", image_url)
-        expected_idx = int(match.group(1))
-        actual_idx = _get_pig_index(species_id, evo)
-        self.assertEqual(expected_idx, actual_idx,
-                         f"{species_id} 二阶: 期望 pig_{expected_idx}, 实际 pig_{actual_idx}")
+        image_url = f"/static/images/cropped_pigs2/{species_id}_{evo}.png"
 
         pet = self._make_quality_pet(3, species_id, evo, 35, 2000, "表情猪王")
         pet.training = True
@@ -474,20 +450,28 @@ class TestRealImageGeneration(unittest.IsolatedAsyncioTestCase):
     # ── C品质 — P020 领养场景 ──
     async def test_real_C_adopt(self):
         """C品质 P020 领养"""
-        import re
-        from src.pet_config import _get_pig_index
         species_id = "P020"
         evo = 0
-        image_url = "/static/images/cropped_pigs2/pig_20.png"
-        # 验证 _get_pig_index 与硬编码图片ID一致
-        match = re.search(r"pig_(\d+)", image_url)
-        expected_idx = int(match.group(1))
-        actual_idx = _get_pig_index(species_id, evo)
-        self.assertEqual(expected_idx, actual_idx,
-                         f"{species_id} 一阶: 期望 pig_{expected_idx}, 实际 pig_{actual_idx}")
+        image_url = f"/static/images/cropped_pigs2/{species_id}_{evo}.png"
 
         pet = self._make_quality_pet(2, species_id, evo, 1, 0, "泡泡猪")
         await self._gen_and_verify(pet, "adopt", image_url, tag="C")
+
+    # ── 帮助菜单截图 ──
+    async def test_real_help_menu(self):
+        """帮助菜单 HTML → data/images/help.png"""
+        from src.screenshot.render import html_to_image
+
+        html_path = Path(__file__).parent.parent / "help_menu.html"
+        self.assertTrue(html_path.exists(), f"help_menu.html 应存在: {html_path}")
+
+        html_str = html_path.read_text(encoding="utf-8")
+        output_path = Path(__file__).parent.parent / "data" / "images" / "help.png"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        await html_to_image(self.browser, html_str, output_path, padding=0)
+        self.assertTrue(output_path.exists(), f"help.png 应被创建: {output_path}")
+        self.assertGreater(output_path.stat().st_size, 100)
 
 
 if __name__ == "__main__":

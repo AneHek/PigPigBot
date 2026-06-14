@@ -72,11 +72,14 @@ class InMemoryRedis:
         self._zsets[name].update(mapping)
         return len(mapping)
 
-    def zrevrange(self, name: str, start: int, end: int):
+    def zrevrange(self, name: str, start: int, end: int, withscores: bool = False):
         if name not in self._zsets:
             return []
         sorted_items = sorted(self._zsets[name].items(), key=lambda x: x[1], reverse=True)
-        return [item[0] for item in sorted_items[start:end + 1]]
+        result = sorted_items[start:end + 1]
+        if withscores:
+            return result
+        return [item[0] for item in result]
 
     def zrem(self, name: str, *values: str):
         if name not in self._zsets:
@@ -89,9 +92,9 @@ class InMemoryRedis:
         return count
 
     def scan_iter(self, match: str = None):
-        prefix = match.replace("*", "") if match else ""
-        for key in self._store:
-            if key.startswith(prefix):
+        import fnmatch
+        for key in list(self._store.keys()):
+            if match is None or fnmatch.fnmatch(key, match):
                 yield key
 
     def incr(self, key: str, amount: int = 1) -> int:
@@ -113,6 +116,57 @@ class InMemoryRedis:
     def smembers(self, key: str) -> set:
         return self._sets.get(key, set())
 
+    def sismember(self, key: str, value: str) -> bool:
+        return value in self._sets.get(key, set())
+
+    def hgetall(self, name: str) -> dict:
+        return dict(self._hashes.get(name, {}))
+
+    def hdel(self, name: str, *keys: str) -> int:
+        if name not in self._hashes:
+            return 0
+        count = 0
+        for k in keys:
+            if k in self._hashes[name]:
+                del self._hashes[name][k]
+                count += 1
+        return count
+
+    def keys(self, pattern: str) -> list:
+        import fnmatch
+        all_keys = list(self._store.keys()) + list(self._hashes.keys()) + list(self._zsets.keys()) + list(self._sets.keys())
+        return [k for k in all_keys if fnmatch.fnmatch(k, pattern)]
+
+    def hincrby(self, name: str, key: str, amount: int = 1) -> int:
+        if name not in self._hashes:
+            self._hashes[name] = {}
+        val = int(self._hashes[name].get(key, 0)) + amount
+        self._hashes[name][key] = str(val)
+        return val
+
+    def incrby(self, key: str, amount: int = 1) -> int:
+        return self.incr(key, amount)
+
+    def decrby(self, key: str, amount: int = 1) -> int:
+        val = int(self._store.get(key, 0)) - amount
+        self._store[key] = str(val)
+        return val
+
+    def zincrby(self, name: str, amount: float, value: str) -> float:
+        if name not in self._zsets:
+            self._zsets[name] = {}
+        self._zsets[name][value] = self._zsets[name].get(value, 0) + amount
+        return self._zsets[name][value]
+
+    def zscore(self, name: str, value: str) -> float | None:
+        return self._zsets.get(name, {}).get(value)
+
+    def zcard(self, name: str) -> int:
+        return len(self._zsets.get(name, {}))
+
+    def expire(self, key: str, seconds: int) -> bool:
+        return True
+
 
 # ── Mock config ──
 
@@ -130,12 +184,14 @@ MOCK_CONFIG = {
 _redis_patch = patch("redis.Redis", InMemoryRedis)
 _redis_patch.start()
 
-import src.data_manager as dm_module
+import src.data as dm_module
 dm_module.config = MOCK_CONFIG
-dm_module._redis_client = InMemoryRedis()
 
-from src.data_manager import DataManager, Pet, data_manager, KEY_LEADERBOARD
-from src.pet_stats import generate_ivs, calc_stats
+import src.data.models as models_module
+
+from src.data import DataManager, data_manager
+from src.data.models import Pet, KEY_LEADERBOARD
+from src.pet.stats import generate_ivs, calc_stats
 
 
 def make_test_pet(user_id="user001", user_name="测试", species_id="P001",
@@ -365,7 +421,7 @@ class TestTraining(TestDataManagerBase):
         # Manually set training_start to 11 minutes ago
         pet = self.dm.get_pet("user001")
         pet.training_start = time.time() - 660  # 11 minutes
-        import src.data_manager as dm_mod
+        import src.data.models as dm_mod
         dm_mod._redis_client.set(
             self.dm._pet_key("user001"),
             json.dumps(pet.to_dict(), ensure_ascii=False),
@@ -399,7 +455,7 @@ class TestGroupMembers(TestDataManagerBase):
         self.dm.add_group_member("group_001", "user_002")
         self.dm.add_group_member("group_001", "user_001")  # 重复加入
 
-        import src.data_manager as dm_mod
+        import src.data.models as dm_mod
         members = dm_mod._redis_client.smembers(
             dm_mod.KEY_GROUP_MEMBERS.format(group_id="group_001"))
         self.assertEqual(len(members), 2)

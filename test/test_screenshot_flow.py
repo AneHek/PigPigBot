@@ -25,14 +25,14 @@ class TestUUIDSceneIsolation(unittest.TestCase):
 
     def test_same_inputs_same_uuid(self):
         """相同 user_id + last_update + scene → 相同 UUID"""
-        from src.image_lifecycle import generate_screenshot_uuid
+        from src.screenshot.lifecycle import generate_screenshot_uuid
         u1 = generate_screenshot_uuid("user1", 1000.0, "adopt")
         u2 = generate_screenshot_uuid("user1", 1000.0, "adopt")
         self.assertEqual(u1, u2)
 
     def test_different_scene_different_uuid(self):
         """相同 user_id + last_update，不同 scene → 不同 UUID"""
-        from src.image_lifecycle import generate_screenshot_uuid
+        from src.screenshot.lifecycle import generate_screenshot_uuid
         u_adopt = generate_screenshot_uuid("user1", 1000.0, "adopt")
         u_stats = generate_screenshot_uuid("user1", 1000.0, "stats")
         u_evolve = generate_screenshot_uuid("user1", 1000.0, "evolve")
@@ -42,21 +42,21 @@ class TestUUIDSceneIsolation(unittest.TestCase):
 
     def test_different_last_update_different_uuid(self):
         """不同 last_update → 不同 UUID"""
-        from src.image_lifecycle import generate_screenshot_uuid
+        from src.screenshot.lifecycle import generate_screenshot_uuid
         u1 = generate_screenshot_uuid("user1", 1000.0, "stats")
         u2 = generate_screenshot_uuid("user1", 2000.0, "stats")
         self.assertNotEqual(u1, u2)
 
     def test_empty_scene_backward_compatible(self):
         """scene 为空字符串时仍可正常工作"""
-        from src.image_lifecycle import generate_screenshot_uuid
+        from src.screenshot.lifecycle import generate_screenshot_uuid
         u = generate_screenshot_uuid("user1", 1000.0, "")
         self.assertIsNotNone(u)
         self.assertGreater(len(u), 0)
 
     def test_uuid_format(self):
         """UUID 格式为 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"""
-        from src.image_lifecycle import generate_screenshot_uuid
+        from src.screenshot.lifecycle import generate_screenshot_uuid
         u = generate_screenshot_uuid("user1", 1000.0, "adopt")
         parts = u.split("-")
         self.assertEqual(len(parts), 5)
@@ -66,7 +66,7 @@ class TestRenderPetHtmlBase64(unittest.TestCase):
     """render_pet_html 的 base64_image 参数。"""
 
     def _make_pet(self):
-        from src.data_manager import Pet
+        from src.data.models import Pet
         return Pet(
             owner_id="test", owner_name="test",
             name="测试猪", species_id="P001",
@@ -78,7 +78,7 @@ class TestRenderPetHtmlBase64(unittest.TestCase):
 
     def test_base64_image_used_in_src(self):
         """传入 base64_image 时，img src 使用 data URI"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         b64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
         html = render_pet_html(pet, "stats", "http://example.com/img.png",
@@ -88,14 +88,14 @@ class TestRenderPetHtmlBase64(unittest.TestCase):
 
     def test_no_base64_falls_back_to_url(self):
         """不传 base64_image 时，使用 image_url 或 file:// 路径"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         html = render_pet_html(pet, "stats", "http://example.com/img.png")
         self.assertIn("http://example.com/img.png", html)
 
     def test_base64_empty_string_falls_back(self):
         """base64_image 为空字符串时回退到 URL"""
-        from src.image_gen import render_pet_html
+        from src.screenshot.render import render_pet_html
         pet = self._make_pet()
         html = render_pet_html(pet, "stats", "http://example.com/img.png",
                                base64_image="")
@@ -107,7 +107,7 @@ class TestHtmlToImagePageReuse(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_page_creates_and_closes(self):
         """不传 page 时新建页面并在 finally 中关闭"""
-        from src.image_gen import html_to_image
+        from src.screenshot.render import html_to_image
 
         mock_page = AsyncMock()
         mock_page.evaluate.return_value = 500
@@ -132,7 +132,7 @@ class TestHtmlToImagePageReuse(unittest.IsolatedAsyncioTestCase):
 
     async def test_with_page_reuses_no_close(self):
         """传入 page 时复用页面，不新建也不关闭"""
-        from src.image_gen import html_to_image
+        from src.screenshot.render import html_to_image
 
         mock_page = AsyncMock()
         mock_page.evaluate.return_value = 500
@@ -159,7 +159,7 @@ class TestHtmlToImagePageReuse(unittest.IsolatedAsyncioTestCase):
 
     async def test_page_set_content_called(self):
         """html_to_image 使用 set_content 而非 goto"""
-        from src.image_gen import html_to_image
+        from src.screenshot.render import html_to_image
 
         mock_page = AsyncMock()
         mock_page.evaluate.return_value = 500
@@ -188,7 +188,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
     """_generate_screenshot 核心流程测试。"""
 
     def _make_pet(self):
-        from src.data_manager import Pet
+        from src.data.models import Pet
         return Pet(
             owner_id="user1", owner_name="test",
             name="测试猪", species_id="P001",
@@ -199,8 +199,8 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
         )
 
     def _make_game(self, dm_overrides=None):
-        from src.pet_game import PetGame
-        from src.data_manager import DataManager
+        from src.game import PetGame
+        from src.data import DataManager
 
         mock_browser = AsyncMock()
         mock_page = AsyncMock()
@@ -233,7 +233,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
 
     async def test_cache_hit_returns_filename(self):
         """缓存命中时直接返回文件名，不生成截图"""
-        from src.image_lifecycle import generate_screenshot_uuid
+        from src.screenshot.lifecycle import generate_screenshot_uuid
 
         pet = self._make_pet()
         expected_uuid = generate_screenshot_uuid("user1", pet.last_update, "")
@@ -243,7 +243,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
             fake_file = screenshots_dir / f"{expected_uuid}.png"
             fake_file.write_bytes(b"fake")
 
-            with patch("src.pet_game.config", {
+            with patch("src.game.base.config", {
                 "webhook": {"callback_domain": "https://test.com"},
                 "image": {
                     "pig_source": "cropped_pigs2",
@@ -263,7 +263,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
         pet = self._make_pet()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.pet_game.config", {
+            with patch("src.game.base.config", {
                 "webhook": {"callback_domain": "https://test.com"},
                 "image": {
                     "pig_source": "cropped_pigs2",
@@ -283,7 +283,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
         sem = asyncio.Semaphore(2)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.pet_game.config", {
+            with patch("src.game.base.config", {
                 "webhook": {"callback_domain": "https://test.com"},
                 "image": {
                     "pig_source": "cropped_pigs2",
@@ -315,7 +315,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
         mock_page.close = AsyncMock()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.pet_game.config", {
+            with patch("src.game.base.config", {
                 "webhook": {"callback_domain": "https://test.com"},
                 "image": {
                     "pig_source": "cropped_pigs2",
@@ -338,7 +338,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
         pet = self._make_pet()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.pet_game.config", {
+            with patch("src.game.base.config", {
                 "webhook": {"callback_domain": "https://test.com"},
                 "image": {
                     "pig_source": "cropped_pigs2",
@@ -365,7 +365,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
             old_file = screenshots_dir / f"{old_uuid}.png"
             old_file.write_bytes(b"old_screenshot")
 
-            with patch("src.pet_game.config", {
+            with patch("src.game.base.config", {
                 "webhook": {"callback_domain": "https://test.com"},
                 "image": {
                     "pig_source": "cropped_pigs2",
@@ -377,7 +377,7 @@ class TestGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
                     "get_screenshot_uuid": MagicMock(return_value=old_uuid),
                 })
 
-                with patch("src.image_lifecycle.schedule_deletion") as mock_schedule:
+                with patch("src.screenshot.lifecycle.schedule_deletion") as mock_schedule:
                     await game._generate_screenshot(pet)
                     mock_schedule.assert_called_once()
                     call_args = mock_schedule.call_args
@@ -388,7 +388,7 @@ class TestPreGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
     """_pre_generate_screenshot 后台预生成测试。"""
 
     def _make_pet(self):
-        from src.data_manager import Pet
+        from src.data.models import Pet
         return Pet(
             owner_id="user1", owner_name="test",
             name="测试猪", species_id="P001",
@@ -400,7 +400,7 @@ class TestPreGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
 
     async def test_pre_generate_calls_generate_screenshot(self):
         """_pre_generate_screenshot 调用 _generate_screenshot"""
-        from src.pet_game import PetGame
+        from src.game import PetGame
 
         pet = self._make_pet()
         game = PetGame(MagicMock(), MagicMock())
@@ -412,7 +412,7 @@ class TestPreGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
 
     async def test_pre_generate_swallows_exceptions(self):
         """_pre_generate_screenshot 吞掉异常不抛出"""
-        from src.pet_game import PetGame
+        from src.game import PetGame
 
         pet = self._make_pet()
         game = PetGame(MagicMock(), MagicMock())
@@ -422,7 +422,7 @@ class TestPreGenerateScreenshot(unittest.IsolatedAsyncioTestCase):
 
     async def test_pre_generate_with_old_pet(self):
         """_pre_generate_screenshot 传递 old_pet 参数"""
-        from src.pet_game import PetGame
+        from src.game import PetGame
 
         pet = self._make_pet()
         old_pet = self._make_pet()
@@ -440,7 +440,7 @@ class TestBuildPetMessage(unittest.IsolatedAsyncioTestCase):
     """_build_pet_message 消息组装测试。"""
 
     def _make_pet(self):
-        from src.data_manager import Pet
+        from src.data.models import Pet
         return Pet(
             owner_id="user1", owner_name="test",
             name="测试猪", species_id="P001",
@@ -452,13 +452,13 @@ class TestBuildPetMessage(unittest.IsolatedAsyncioTestCase):
 
     async def test_screenshot_url_in_message(self):
         """截图成功时消息中包含截图 URL"""
-        from src.pet_game import PetGame
+        from src.game import PetGame
 
         pet = self._make_pet()
         game = PetGame(MagicMock(), MagicMock())
         game._generate_screenshot = AsyncMock(return_value="abc-123.png")
 
-        with patch("src.pet_game.config", {
+        with patch("src.game.base.config", {
             "webhook": {"callback_domain": "https://test.com"},
             "image": {"pig_source": "cropped_pigs2"},
         }):
@@ -471,13 +471,13 @@ class TestBuildPetMessage(unittest.IsolatedAsyncioTestCase):
 
     async def test_fallback_to_image_url(self):
         """截图失败时回退到原始宠物图片 URL"""
-        from src.pet_game import PetGame
+        from src.game import PetGame
 
         pet = self._make_pet()
         game = PetGame(MagicMock(), MagicMock())
         game._generate_screenshot = AsyncMock(return_value=None)
 
-        with patch("src.pet_game.config", {
+        with patch("src.game.base.config", {
             "webhook": {"callback_domain": "https://test.com"},
             "image": {"pig_source": "cropped_pigs2"},
         }):
@@ -488,13 +488,13 @@ class TestBuildPetMessage(unittest.IsolatedAsyncioTestCase):
 
     async def test_message_has_keyboard(self):
         """消息包含 keyboard 字段"""
-        from src.pet_game import PetGame
+        from src.game import PetGame
 
         pet = self._make_pet()
         game = PetGame(MagicMock(), MagicMock())
         game._generate_screenshot = AsyncMock(return_value="test.png")
 
-        with patch("src.pet_game.config", {
+        with patch("src.game.base.config", {
             "webhook": {"callback_domain": "https://test.com"},
             "image": {"pig_source": "cropped_pigs2"},
         }):

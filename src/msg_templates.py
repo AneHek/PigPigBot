@@ -27,7 +27,9 @@ def build_markdown_msg(
     Args:
         title: 标题文本
         image: 图片链接（可为空字符串）
-        tip: 图片下方文本文本（可为空字符串）
+        tip: 图片下方文本文本（可为空字符串）。
+             注意：tip 不能包含回车符、换行符、<br/>，QQ 模板不支持多行文本，
+             如需分隔多段内容请使用「丨」等分隔符。
         template_id: 模板 ID，默认使用内置模板
 
     Returns:
@@ -167,7 +169,9 @@ def build_markdown_with_buttons(
     Args:
         title: Markdown 模板标题
         image: 图片URL（可为空）
-        tip: 图片下方提示文本
+        tip: 图片下方提示文本。
+             注意：tip 不能包含回车符、换行符、<br/>，QQ 模板不支持多行文本，
+             如需分隔多段内容请使用「丨」等分隔符。
         rows: 按钮行列表，同 build_button_list 的 rows 格式
         template_id: Markdown 模板 ID
 

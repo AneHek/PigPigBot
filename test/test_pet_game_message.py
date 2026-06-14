@@ -18,8 +18,8 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
 
     async def _make_game(self):
         """创建带 mock bot 的 PetGame 实例"""
-        from src.data_manager import DataManager
-        from src.pet_game import PetGame
+        from src.data import DataManager
+        from src.game import PetGame
         from pathlib import Path
 
         # mock bot with browser
@@ -42,7 +42,7 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
         dm.update_pet = MagicMock()
 
         # mock create_pet 返回有效 Pet
-        from src.data_manager import Pet
+        from src.data.models import Pet
         test_pet = Pet(
             owner_id="test_user", owner_name="test",
             name="五行猪混混", species_id="P001",
@@ -87,7 +87,7 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
     async def test_evolve_success_returns_dict(self):
         """进化成功后应返回 dict"""
         game = await self._make_game()
-        from src.data_manager import Pet
+        from src.data.models import Pet
         test_pet = Pet(
             owner_id="test_user", owner_name="test",
             name="五行猪混混", species_id="P001",
@@ -116,7 +116,7 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
         """开始训练返回 文本+按钮（不再是 Markdown）"""
         game = await self._make_game()
         game.dm.start_training = MagicMock()
-        from src.data_manager import Pet
+        from src.data.models import Pet
         test_pet = Pet(
             owner_id="test_user", owner_name="test",
             name="五行猪混混", species_id="P001",
@@ -173,14 +173,14 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
     async def test_battle_no_target(self):
         """战斗无目标返回错误提示"""
         game = await self._make_game()
-        result = await game.battle_pvp("user1", None)
+        result = await game.battle_pvp("user1", "", "")
         self.assertIsInstance(result, str)
         self.assertIn("游戏用户ID", result)
 
     async def test_battle_returns_two_messages(self):
         """战斗成功返回两条消息的list"""
         game = await self._make_game()
-        from src.data_manager import Pet
+        from src.data.models import Pet
         pet_a = Pet(
             owner_id="user1", owner_name="test",
             name="猪A", species_id="P001", game_uid=1,
@@ -208,8 +208,9 @@ class TestPetGameMessageStructure(unittest.IsolatedAsyncioTestCase):
         game.dm.get_pet = MagicMock(side_effect=get_pet_side_effect)
         game.dm.add_exp = MagicMock()
         game.dm.update_leaderboard = MagicMock()
+        game.dm.get_user_by_game_uid = MagicMock(return_value="user2")
 
-        result = await game.battle_pvp("user1", "user2")
+        result = await game.battle_pvp("user1", "", "2")
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 2)
         self.assertIn("战斗开始", result[0])

@@ -12,13 +12,13 @@
     ▼
 handler.py :: handle_message()
     │  parse_command("/进化") → cmd="进化", arg=""
-    │  handlers["进化"] → game.evolve(user_id)
+    │  get_handler("进化") → EvolveMixin.evolve  (装饰器注册)
     │
     ▼
-pet_game.py :: PetGame.evolve(user_id)
+game/evolve.py :: EvolveMixin.evolve(user_id, user_name, arg, group_id)
     │
     ├─ 1. self.dm.get_pet(user_id)
-    │     └─ 无宠物 → 返回错误
+    │     └─ data/pet_store.py → 无宠物 → 返回错误
     │
     ├─ 2. 进化条件校验
     │     ├─ evolution_stage >= 2 → "已是三阶，无法再进化"
@@ -29,7 +29,7 @@ pet_game.py :: PetGame.evolve(user_id)
     │     └─ 保存进化前数据用于属性变化预览
     │
     ├─ 4. self.dm.evolve_pet(user_id)
-    │     └─ data_manager.py :: DataManager.evolve_pet()
+    │     └─ data/pet_store.py :: PetStoreMixin.evolve_pet()
     │        ├─ 校验 stage < 2 且 level >= gate
     │        ├─ 记录 old_species_name = pet.species_name
     │        ├─ pet.evolution_stage += 1
@@ -42,17 +42,17 @@ pet_game.py :: PetGame.evolve(user_id)
     │        │     ├─ pet.exp -= pet.max_exp
     │        │     └─ pet.level += 1
     │        ├─ calc_stats(species_id, new_stage, new_level, ivs)
-    │        │   └─ pet_stats.py :: calc_stats()
+    │        │   └─ pet/stats.py :: calc_stats()
     │        │      └─ E = EVOLUTION_COEFFICIENTS[new_stage] (1.10/1.21)
     │        │      └─ 属性全面提升
     │        ├─ 更新 pet 的 hp/atk/def_/spd/crit/crit_dmg/eva/lifesteal
     │        └─ Redis SET qqbot:pet:{user_id}
     │
     ├─ 5. self.dm.update_leaderboard(result)
-    │     └─ 刷新排行榜
+    │     └─ data/leaderboard.py → 刷新排行榜
     │
     ├─ 6. msg = await self._build_pet_message(result, title, tip, rows, old_pet=old_pet)
-    │     └─ 调用 _generate_screenshot(result, old_pet) 生成进化截图（含属性变化预览）
+    │     └─ game/base.py → 调用 _generate_screenshot(result, old_pet) 生成进化截图（含属性变化预览）
     │     └─ old_pet 参数使截图显示 "旧值→新值" 属性变化
     │     └─ 截图流程 → 详见 screenshot_flow.md
     │
@@ -92,10 +92,10 @@ pet_game.py :: PetGame.evolve(user_id)
 
 | 函数 | 文件 | 作用 |
 |------|------|------|
-| `get_pet()` | data_manager.py | 获取宠物数据 |
-| `evolve_pet()` | data_manager.py | 执行进化：升阶、升级、保留经验继续升级、自动改名、重算属性 |
-| `calc_stats()` | pet_stats.py | 进化后重算战斗属性（含进化系数） |
-| `update_leaderboard()` | data_manager.py | 刷新排行榜 |
-| `_generate_screenshot()` | pet_game.py | 截图核心：缓存/渲染/截图/并发控制 |
-| `_pre_generate_screenshot()` | pet_game.py | 后台预生成通用截图 |
-| `_build_pet_message()` | pet_game.py | 调用截图核心 + 构建消息（含属性变化预览） |
+| `get_pet()` | data/pet_store.py | 获取宠物数据 |
+| `evolve_pet()` | data/pet_store.py | 执行进化：升阶、升级、保留经验继续升级、自动改名、重算属性 |
+| `calc_stats()` | pet/stats.py | 进化后重算战斗属性（含进化系数） |
+| `update_leaderboard()` | data/leaderboard.py | 刷新排行榜 |
+| `_generate_screenshot()` | game/base.py | 截图核心：缓存/渲染/截图/并发控制 |
+| `_pre_generate_screenshot()` | game/base.py | 后台预生成通用截图 |
+| `_build_pet_message()` | game/base.py | 调用截图核心 + 构建消息（含属性变化预览） |

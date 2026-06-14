@@ -15,21 +15,18 @@
 
 ## 二、项目文件摘要
 
-| 文件 | 职责 |
-|------|------|
+| 文件/目录 | 职责 |
+|-----------|------|
 | `main.py` | 入口文件。检查配置、创建 QQBot 实例、注入 game.bot 引用、启动事件循环 |
 | `src/config.py` | 配置加载模块。合并 `config.yaml` 和 `bot_config.yaml` 为全局 `config` dict |
-| `src/bot.py` | Webhook 服务核心。HTTPS 服务启动、签名验证、消息去重/防抖、事件分发、API 消息发送、Playwright 浏览器生命周期管理 |
-| `src/handler.py` | 命令路由器。解析用户消息提取命令和参数，路由到 `PetGame` 对应方法 |
-| `src/pet_game.py` | 游戏核心逻辑。领养、属性、进化、训练、战斗、排行、帮助等全部指令的业务实现 |
-| `src/data_manager.py` | 数据持久化层。`Pet` 数据模型定义、Redis CRUD 操作、排行榜、截图 UUID 管理 |
-| `src/pet_config.py` | 静态数据配置。26 种宠物定义、技能数据、成长表、进化系数、图片路径映射 |
-| `src/pet_stats.py` | 属性计算引擎。IV 生成（二项分布品质）、属性公式计算、品质评级、格式化输出 |
-| `src/battle.py` | 实时自动战斗引擎。0.1s tick 循环、伤害管线、状态效果、技能轮换、战斗报告生成 |
-| `src/image_gen.py` | HTML 渲染 + Playwright 截图。宠物信息卡片 HTML 模板、CSS 样式、HTML→PNG 转换 |
-| `src/image_lifecycle.py` | 截图生命周期管理。确定性 UUID 生成、延迟删除、启动清理、每日 0 点兜底清理 |
+| `src/handler.py` | 命令路由器。解析用户消息提取命令和参数，通过装饰器注册表路由到 `PetGame` 对应方法 |
 | `src/msg_templates.py` | 消息模板封装。QQ 官方 Markdown 模板消息、按钮键盘消息、组合消息构建 |
-| `src/token_manager.py` | Token 管理器。QQ API access_token 获取、Redis 存储、后台定时刷新 |
+| `src/core/` | 基础设施。`bot.py`（Webhook 服务）、`api.py`（API 调用）、`ssl_utils.py`（证书）、`token_manager.py` |
+| `src/pet/` | 宠物领域。`config.py`（25 种族 + 技能）、`stats.py`（IV + 属性公式 + CP） |
+| `src/game/` | 游戏命令。`commands.py`（装饰器注册中心）、`base.py`（截图辅助）、各命令 Mixin 文件 |
+| `src/battle/` | 战斗引擎。`models.py`（数据模型）、`engine.py`（引擎 + 常量）、`report.py`（战报格式化） |
+| `src/data/` | 数据持久化。`models.py`（Pet + Redis）、各 Mixin 文件（pet_store / economy / energy / dungeon / boss / social / checkin / leaderboard / group） |
+| `src/screenshot/` | 截图系统。`render.py`（HTML 模板 + Playwright）、`lifecycle.py`（UUID + 清理） |
 
 ## 三、信息处理前置流程
 
@@ -165,7 +162,32 @@ python main.py
 | `/休息` | 结束训练领取经验 | [cmd_rest.md](cmd_rest.md) |
 | `/战斗` | PvP 战斗（入参游戏用户ID） | [cmd_battle.md](cmd_battle.md) |
 | `/注册` | 生成游戏用户ID（兼容旧用户，不在帮助页显示） | — |
+| `/签到` | 每日签到（7天周期） | [cmd_checkin.md](cmd_checkin.md) |
+| `/行动力` | 查看行动力状态 | [cmd_checkin.md](cmd_checkin.md) |
+| `/商店` | 查看商品列表 | [cmd_shop.md](cmd_shop.md) |
+| `/购买` | 购买商品 | [cmd_shop.md](cmd_shop.md) |
+| `/使用` | 使用消耗品 | [cmd_shop.md](cmd_shop.md) |
+| `/背包` | 查看持有物品 | [cmd_shop.md](cmd_shop.md) |
+| `/喂食` | 喂食目标玩家宠物 | [cmd_interact.md](cmd_interact.md) |
+| `/抚摸` | 抚摸目标玩家宠物 | [cmd_interact.md](cmd_interact.md) |
+| `/玩耍` | 与目标玩家宠物玩耍 | [cmd_interact.md](cmd_interact.md) |
+| `/鼓励` | 鼓励目标玩家 | [cmd_interact.md](cmd_interact.md) |
+| `/群训练` | 群内训练（仅群聊） | [cmd_interact.md](cmd_interact.md) |
+| `/亲密` | 查看亲密度列表 | [cmd_interact.md](cmd_interact.md) |
+| `/副本` | 副本总览/挑战 | [cmd_dungeon.md](cmd_dungeon.md) |
+| `/副本重置` | 重置章节今日次数 | [cmd_dungeon.md](cmd_dungeon.md) |
+| `/boss` | 世界Boss状态/攻击/排行/奖励 | [cmd_boss.md](cmd_boss.md) |
+| `/称号` | 查看/装备/购买称号 | [cmd_title.md](cmd_title.md) |
+| `/活动` | 查看当前活动 | [cmd_event.md](cmd_event.md) |
+| `/被动` | 查看/装备/升级/重置被动技能 | [cmd_passive.md](cmd_passive.md) |
 
-## 六、浏览器截图流程
+## 六、副本敌方被动设计
+
+副本敌方被动技能配置详见：[gameplay.md](gameplay.md)
+
+- 副本 1（萌新猪舍）：敌方无被动
+- 副本 2~7：敌方根据章节等级递增被动数量与等级，BOSS 关额外强化
+
+## 七、浏览器截图流程
 
 截图系统的完整技术流程详见：[screenshot_flow.md](screenshot_flow.md)

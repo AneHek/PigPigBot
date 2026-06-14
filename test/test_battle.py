@@ -9,7 +9,7 @@ sys.modules['redis'] = MagicMock()
 
 from src.battle import BattleEngine, BattleResult, BattleEvent, BattlePet, \
     DT, MAX_DURATION, format_battle_report
-from src.pet_config import PET_SPECIES, Skill, SkillEffect
+from src.pet.config import PET_SPECIES, Skill, SkillEffect
 
 
 def make_test_pet_dict(**overrides) -> dict:

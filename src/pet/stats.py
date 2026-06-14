@@ -5,7 +5,7 @@ Based on levelandAtt.md design document.
 """
 import random
 
-from src.pet_config import PET_GROWTH, EVOLUTION_COEFFICIENTS, FIXED_STATS, STAT_CAPS
+from src.pet.config import PET_GROWTH, EVOLUTION_COEFFICIENTS, FIXED_STATS, STAT_CAPS
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -128,7 +128,7 @@ def calc_stats(species_id: str, evolution_stage: int,
 
     Returns dict with keys matching Pet dataclass: hp, atk, def_, spd, crit, crit_dmg, eva, lifesteal
     """
-    from src.pet_config import PET_SPECIES
+    from src.pet.config import PET_SPECIES
     battle_type = PET_SPECIES[species_id]["battle_type"]
     growth = PET_GROWTH[battle_type]
     E = EVOLUTION_COEFFICIENTS[evolution_stage]

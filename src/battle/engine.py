@@ -1,33 +1,22 @@
-"""
-battle.py — Real-time auto-battle engine.
-
-Based on battle.md design document.
-"""
 from __future__ import annotations
 
-import copy
 import random
-import time
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
-from src.pet_config import PET_SPECIES, Skill, SkillEffect
+from src.pet.config import PET_SPECIES, Skill, SkillEffect
+from src.battle.models import BattlePet, BattleEvent, BattleResult, Status
 
-# ── Constants ──
+DT = 0.1
+MAX_DURATION = 120
+TYPE_ADVANTAGE = 1.15
+TYPE_DISADVANTAGE = 0.90
 
-DT = 0.1          # tick interval in seconds
-MAX_DURATION = 60  # max battle duration in seconds
-TYPE_ADVANTAGE = 1.15   # 15% bonus for type advantage
-TYPE_DISADVANTAGE = 0.90  # 10% penalty for disadvantage
-
-# Type advantage matrix
 COUNTER_MAP = {
     "attack": "defense",
     "defense": "speed",
     "speed": "attack",
 }
 
-# Control priority (higher = overrides lower)
 CONTROL_PRIORITY = {
     "stun": 100, "freeze": 100, "ice": 100,
     "imprison": 80, "float": 80,
@@ -38,119 +27,20 @@ CONTROL_PRIORITY = {
 }
 
 
-# ── Battle Dataclasses ──
-
-@dataclass
-class Status:
-    """A temporary status effect on a pet."""
-    name: str
-    type: str               # dot, debuff, control, buff, hot, shield, reflect
-    duration: float         # remaining seconds
-    value: float = 0        # damage per tick / percentage / shield amount
-    stat: str = ""          # affected stat (for debuff/buff)
-    tick_interval: float = 1.0
-    tick_timer: float = 1.0
-    source: str = ""        # owner pet ID
-    control_type: str = ""  # for control effects
-    confuse_chance: float = 0
-    crit_dmg_pct: float = 0
-
-
-@dataclass
-class BattlePet:
-    """In-battle pet state (snapshot of Pet)."""
-    owner_id: str
-    name: str
-    species_name: str
-    battle_type: str
-    evolution_stage: int
-
-    # Current stats
-    hp: float
-    max_hp: float
-    atk: float
-    def_: float
-    spd: float
-    crit: float
-    crit_dmg: float
-    eva: float
-    lifesteal: float
-
-    # Timers
-    attack_timer: float = 0
-    attack_interval: float = 1.0
-
-    # Skills
-    skill_cds: list[float] = field(default_factory=list)
-    skill_index: int = 0
-    skills: list[dict] = field(default_factory=list)
-
-    # Status
-    statuses: list[Status] = field(default_factory=list)
-    silenced: bool = False
-    disarmed: bool = False
-
-    # Auto-skill flag
-    auto_skill_interval: float = 0
-    auto_skill_timer: float = 0
-
-    @property
-    def is_dead(self) -> bool:
-        return self.hp <= 0
-
-    @property
-    def attack_speed(self) -> float:
-        return 1.0 / max(self.spd, 0.1)
-
-
-@dataclass
-class BattleEvent:
-    """A single event in the battle timeline."""
-    time: float
-    type: str               # attack, skill, dot, heal, shield, dodge, crit, death, buff, debuff, control
-    source: str             # pet name
-    target: str             # target pet name
-    detail: str = ""        # description
-    damage: float = 0
-    is_crit: bool = False
-    is_dodge: bool = False
-
-
-@dataclass
-class BattleResult:
-    """Result of a completed battle."""
-    winner: Optional[str]   # owner_id of winner
-    winner_name: str = ""
-    loser_name: str = ""
-    events: list[BattleEvent] = field(default_factory=list)
-    duration: float = 0
-    pets: list[BattlePet] = field(default_factory=list)
-
-
-def _group(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
-
-
-# ══════════════════════════════════════════════════════════════════════
-# Battle Engine
-# ══════════════════════════════════════════════════════════════════════
-
 class BattleEngine:
-    """Core battle engine."""
 
-    def run(self, pet_a_dict: dict, pet_b_dict: dict) -> BattleResult:
-        """Run a battle between two pets. Returns BattleResult."""
+    def run(self, pet_a_dict: dict, pet_b_dict: dict,
+            max_duration: float = MAX_DURATION) -> BattleResult:
         a = self._create_battle_pet(pet_a_dict)
         b = self._create_battle_pet(pet_b_dict)
+        self._apply_passive_skills(a, pet_a_dict)
+        self._apply_passive_skills(b, pet_b_dict)
         events: list[BattleEvent] = []
         elapsed = 0.0
 
-        # Type advantage check
         a_adv = self._type_advantage(a.battle_type, b.battle_type)
 
-        while elapsed < MAX_DURATION:
-            # ── Control check ──
+        while elapsed < max_duration:
             a_controlled = self._is_controlled(a)
             b_controlled = self._is_controlled(b)
             a_silenced = self._has_control_type(a, "silence")
@@ -158,26 +48,21 @@ class BattleEngine:
             b_silenced = self._has_control_type(b, "silence")
             b_disarmed = self._has_control_type(b, "disarm")
 
-            # ── Status ticks ──
             self._tick_statuses(a, b, DT, events, elapsed)
             self._tick_statuses(b, a, DT, events, elapsed)
             self._decay_statuses(a, DT)
             self._decay_statuses(b, DT)
 
-            # ── Pet A actions ──
             actions_a = self._process_pet(a, b, DT, a_controlled, a_silenced,
                                           a_disarmed, events, elapsed, a_adv)
-            # ── Pet B actions ──
             actions_b = self._process_pet(b, a, DT, b_controlled, b_silenced,
                                           b_disarmed, events, elapsed, 1.0)
 
-            # ── Death check ──
             if a.is_dead or b.is_dead:
                 break
 
             elapsed += DT
 
-        # Determine winner
         winner_id = None
         winner_name = ""
         loser_name = ""
@@ -189,7 +74,6 @@ class BattleEngine:
             winner_id = a.owner_id
             winner_name = a.name
             loser_name = b.name
-        # If both dead or timeout: draw, no winner
 
         return BattleResult(
             winner=winner_id,
@@ -200,22 +84,16 @@ class BattleEngine:
             pets=[a, b],
         )
 
-    # ── Battle pet creation ──
-
     def _create_battle_pet(self, pet_dict: dict) -> BattlePet:
         species_id = pet_dict.get("species_id", "")
         species_info = PET_SPECIES.get(species_id, {})
         stage = pet_dict.get("evolution_stage", 0)
 
-        # Skills: 1 for stage 0, 2 for stage 1, 3 for stage 2
-        all_skills = species_info.get("skills", [])  # list[Skill] per stage
+        all_skills = species_info.get("skills", [])
         available_skills = []
         if stage < len(all_skills):
-            # stages[0] = skill0, stages[1] = skill1, stages[2] = skill2
-            # Available = all skills up to and including current stage
             s = all_skills[stage]
             if isinstance(s, Skill):
-                # Each skills entry is one Skill for that stage
                 available_skills = [all_skills[i] for i in range(stage + 1)
                                     if i < len(all_skills) and isinstance(all_skills[i], Skill)]
             elif isinstance(s, dict):
@@ -223,7 +101,6 @@ class BattleEngine:
                     if key in s:
                         available_skills.append(s[key])
 
-        # Skill CD timers - 所有技能初始时都处于冷却状态
         skill_cds = [skill.cd for skill in available_skills]
 
         bp = BattlePet(
@@ -247,7 +124,46 @@ class BattleEngine:
         )
         return bp
 
-    # ── Type advantage ──
+    def _apply_passive_skills(self, bp: BattlePet, pet_dict: dict):
+        """Apply passive skill stat bonuses to a BattlePet."""
+        passive_slots = pet_dict.get("passive_slots", {})
+        if not passive_slots:
+            return
+
+        from src.game.passive_config import PASSIVE_SKILLS
+
+        for slot, skill_id in passive_slots.items():
+            if skill_id not in PASSIVE_SKILLS:
+                continue
+            info = PASSIVE_SKILLS[skill_id]
+            level = pet_dict.get("passive_levels", {}).get(skill_id, 0)
+            if level <= 0 or level > len(info["pct_per_level"]):
+                continue
+            pct = info["pct_per_level"][level - 1]
+            stat = info["stat"]
+
+            if stat == "atk":
+                bp.atk *= (1 + pct / 100)
+            elif stat == "hp":
+                bonus = bp.max_hp * pct / 100
+                bp.max_hp += bonus
+                bp.hp += bonus
+            elif stat == "def":
+                bp.def_ *= (1 + pct / 100)
+            elif stat == "spd":
+                bp.spd *= (1 + pct / 100)
+                bp.attack_interval = 1.0 / max(bp.spd, 0.1)
+            elif stat == "crit":
+                bp.crit += pct
+            elif stat == "crit_dmg":
+                bp.crit_dmg += pct / 100
+            elif stat == "eva":
+                bp.eva += pct
+            elif stat == "lifesteal":
+                bp.lifesteal += pct / 100
+            elif stat == "spd_flat":
+                bp.spd += pct
+                bp.attack_interval = 1.0 / max(bp.spd, 0.1)
 
     def _type_advantage(self, atk_type: str, def_type: str) -> float:
         if COUNTER_MAP.get(atk_type) == def_type:
@@ -256,16 +172,12 @@ class BattleEngine:
             return TYPE_DISADVANTAGE
         return 1.0
 
-    # ── Process one pet's actions for a tick ──
-
     def _process_pet(self, pet: BattlePet, enemy: BattlePet, dt: float,
                      controlled: bool, silenced: bool, disarmed: bool,
                      events: list[BattleEvent], elapsed: float,
                      type_mult: float) -> bool:
-        """Process one pet's timers and actions. Returns True if any action executed."""
         acted = False
 
-        # Auto-skill (P010 stage 3 mechanics)
         if pet.auto_skill_interval > 0:
             pet.auto_skill_timer += dt
             while pet.auto_skill_timer >= pet.auto_skill_interval:
@@ -274,25 +186,20 @@ class BattleEngine:
                     self._execute_skill(pet, enemy, 0, events, elapsed, type_mult)
                     acted = True
 
-        # Skill CD timers
         for i in range(len(pet.skill_cds)):
             if pet.skill_cds[i] > 0:
                 pet.skill_cds[i] = max(0, pet.skill_cds[i] - dt)
 
-        # Skill rotation (only if not silenced and not controlled)
         if not controlled and not silenced and len(pet.skills) > 0:
             skill = pet.skills[pet.skill_index]
             if pet.skill_cds[pet.skill_index] <= 0:
                 self._execute_skill(pet, enemy, pet.skill_index, events, elapsed, type_mult)
-                # 当前技能使用后，设置下一个技能的冷却时间
                 next_index = (pet.skill_index + 1) % len(pet.skills)
                 pet.skill_cds[next_index] = pet.skills[next_index].cd
                 pet.skill_index = next_index
-                # Skill after-swing: reset attack_timer to 50% of interval
                 pet.attack_timer = pet.attack_interval * 0.5
                 acted = True
 
-        # Auto-attack (only if not controlled and not disarmed)
         if not controlled and not disarmed:
             pet.attack_timer += dt
             while pet.attack_timer >= pet.attack_interval:
@@ -302,26 +209,20 @@ class BattleEngine:
 
         return acted
 
-    # ── Damage pipeline ──
-
     def _calc_damage(self, attacker: BattlePet, defender: BattlePet,
                      base_damage: float, type_mult: float,
                      is_true_damage: bool = False) -> tuple[float, bool, bool]:
-        """9-step damage pipeline. Returns (damage, is_crit, is_dodge)."""
         damage = base_damage
 
-        # Step 2: Type advantage (skip for true damage)
         if not is_true_damage:
             damage *= type_mult
 
-        # Step 3: Crit check
         is_crit = False
         always_crit = self._get_buff(defender, "crit_guaranteed") is not None
         if always_crit or random.random() * 100 < attacker.crit:
             is_crit = True
             damage *= attacker.crit_dmg
 
-        # Step 4: Dodge check
         is_dodge = False
         effective_eva = defender.eva
         blind_debuff = self._get_debuff(attacker, "hit_rate")
@@ -331,7 +232,6 @@ class BattleEngine:
             is_dodge = True
             return 0, is_crit, is_dodge
 
-        # Step 5: Shield absorb
         if not is_true_damage:
             shield = self._get_buff(defender, "shield")
             if shield:
@@ -341,7 +241,6 @@ class BattleEngine:
                 if shield.value <= 0:
                     defender.statuses.remove(shield)
 
-        # Step 6: Defense reduction (skip for true damage)
         if not is_true_damage:
             def_val = defender.def_
             def_debuff = self._get_debuff(defender, "def")
@@ -350,8 +249,6 @@ class BattleEngine:
             damage *= (1 - def_val / (def_val + 1000))
 
         return max(damage, 0), is_crit, is_dodge
-
-    # ── Execute attack ──
 
     def _execute_attack(self, attacker: BattlePet, defender: BattlePet,
                         events: list[BattleEvent], elapsed: float,
@@ -374,7 +271,6 @@ class BattleEngine:
         events.append(BattleEvent(elapsed, "attack", attacker.name,
                                   defender.name, detail, dmg, is_crit))
 
-        # Step 7: Reflect
         reflect_buff = self._get_buff(defender, "reflect")
         if reflect_buff and dmg > 0:
             reflect_dmg_val = dmg * (reflect_buff.value / 100)
@@ -384,12 +280,9 @@ class BattleEngine:
                                      f"反弹 {reflect_dmg_val:.0f} 伤害",
                                      reflect_dmg_val))
 
-        # Step 8: Lifesteal
         if attacker.lifesteal > 0 and dmg > 0:
             heal_amount = dmg * attacker.lifesteal
             attacker.hp = min(attacker.max_hp, attacker.hp + heal_amount)
-
-    # ── Execute skill ──
 
     def _execute_skill(self, pet: BattlePet, enemy: BattlePet,
                        skill_idx: int, events: list[BattleEvent],
@@ -401,16 +294,18 @@ class BattleEngine:
         for effect in skill.effects:
             self._resolve_effect(pet, enemy, effect, events, elapsed, type_mult)
 
-    # ── Resolve skill effect ──
-
     def _resolve_effect(self, source: BattlePet, target: BattlePet,
                         effect: SkillEffect, events: list[BattleEvent],
                         elapsed: float, type_mult: float):
         etype = effect.type
 
         if etype == "damage":
-            if effect.min_val > 0 and effect.max_val > effect.min_val:
-                dmg_val = random.uniform(effect.min_val, effect.max_val)
+            if effect.atk_pct > 0:
+                if effect.min_val > 0 and effect.max_val > effect.min_val:
+                    pct = random.uniform(effect.min_val, effect.max_val)
+                else:
+                    pct = effect.atk_pct
+                dmg_val = source.atk * pct / 100
             else:
                 dmg_val = effect.value
             for _ in range(effect.hit_count):
@@ -424,35 +319,50 @@ class BattleEngine:
                     events.append(BattleEvent(elapsed, "damage", source.name,
                                              target.name, f"伤害 {dmg:.0f}", dmg,
                                              is_crit=is_crit))
-                    # Reflect
                     refl = self._get_buff(target, "reflect")
                     if refl and dmg > 0:
                         ref_dmg = dmg * (refl.value / 100)
                         source.hp -= ref_dmg
 
         elif etype == "true_damage":
-            dmg, _, is_dodge = self._calc_damage(source, target, effect.value, 1.0, True)
+            if effect.atk_pct > 0:
+                td_val = source.atk * effect.atk_pct / 100
+            else:
+                td_val = effect.value
+            dmg, _, is_dodge = self._calc_damage(source, target, td_val, 1.0, True)
             if not is_dodge:
-                target.hp -= effect.value
+                target.hp -= td_val
                 events.append(BattleEvent(elapsed, "damage", source.name,
-                                         target.name, f"真实伤害 {effect.value:.0f}",
-                                         effect.value))
+                                         target.name, f"真实伤害 {td_val:.0f}",
+                                         td_val))
 
         elif etype == "dot":
+            if effect.dot_atk_pct > 0:
+                tick_dmg = source.atk * effect.dot_atk_pct / 100
+            else:
+                tick_dmg = effect.damage_per_tick
             s = Status("dot_" + effect.stat, "dot", effect.duration,
-                      effect.damage_per_tick, tick_interval=effect.tick_interval,
+                      tick_dmg, tick_interval=effect.tick_interval,
                       source=source.owner_id)
             target.statuses.append(s)
 
         elif etype == "hot":
-            s = Status("hot", "hot", effect.duration, effect.damage_per_tick,
+            if effect.hp_pct > 0:
+                tick_heal = source.max_hp * effect.hp_pct / 100
+            else:
+                tick_heal = effect.damage_per_tick
+            s = Status("hot", "hot", effect.duration, tick_heal,
                       source=source.owner_id)
             source.statuses.append(s)
 
         elif etype == "heal":
-            source.hp = min(source.max_hp, source.hp + effect.value)
+            if effect.hp_pct > 0:
+                heal_val = source.max_hp * effect.hp_pct / 100
+            else:
+                heal_val = effect.value
+            source.hp = min(source.max_hp, source.hp + heal_val)
             events.append(BattleEvent(elapsed, "heal", source.name, source.name,
-                                     f"回复 {effect.value:.0f} HP"))
+                                     f"回复 {heal_val:.0f} HP"))
 
         elif etype == "debuff":
             if effect.stat == "magic_resist":
@@ -461,7 +371,6 @@ class BattleEngine:
                 dur = effect.duration
             s = Status(f"debuff_{effect.stat}", "debuff", dur, effect.stat_pct,
                       stat=effect.stat, source=source.owner_id)
-            # Remove existing same-type debuff
             self._remove_status(target, s.type, s.stat)
             target.statuses.append(s)
             events.append(BattleEvent(elapsed, "debuff", source.name, target.name,
@@ -525,16 +434,13 @@ class BattleEngine:
                                      f"净化了 {len(removed)} 个负面状态"))
 
         elif etype == "interrupt":
-            # Interrupt: set enemy's current skill CD to max (wait again)
             if len(enemy.skill_cds) > 0:
                 skill = enemy.skills[enemy.skill_index]
-                # Force current skill to wait full CD
                 enemy.skill_cds[enemy.skill_index] = skill.cd
             events.append(BattleEvent(elapsed, "control", source.name, target.name,
                                      "打断技能"))
 
         elif etype == "damage_share":
-            # Damage share buff (P012 stage2)
             self._remove_status(source, "damage_share")
             s = Status("damage_share", "damage_share", effect.duration,
                       effect.value_pct, source=source.owner_id)
@@ -546,7 +452,11 @@ class BattleEngine:
             events.append(BattleEvent(elapsed, "buff", source.name, source.name,
                                      f"自动技能 每{effect.auto_interval}秒"))
 
-    # ── Status tick processing ──
+        elif etype == "reset_skills":
+            for i in range(len(source.skill_cds)):
+                source.skill_cds[i] = 0
+            events.append(BattleEvent(elapsed, "buff", source.name, source.name,
+                                     "重置技能CD"))
 
     def _tick_statuses(self, pet: BattlePet, enemy: BattlePet, dt: float,
                        events: list[BattleEvent], elapsed: float):
@@ -558,12 +468,10 @@ class BattleEngine:
                     pet.hp -= s.value
                     events.append(BattleEvent(elapsed, "dot", "DOT", pet.name,
                                              f"持续伤害 {s.value:.0f}", s.value))
-                    # Reflect DoT
                     refl = self._get_buff(pet, "reflect")
                     if refl:
                         ref = s.value * (refl.value / 100)
-                        # Reflect goes to source, but we need enemy ref
-                        pass  # simplified: reflect only on direct attacks
+                        pass
 
             elif s.type == "hot":
                 s.tick_timer -= dt
@@ -575,15 +483,11 @@ class BattleEngine:
         for s in pet.statuses[:]:
             s.duration -= dt
             if s.duration <= 0:
-                # Remove auto-skill flag
                 if s.type == "auto_skill" and hasattr(pet, 'auto_skill_interval'):
                     pet.auto_skill_interval = 0
                 pet.statuses.remove(s)
 
-    # ── Control helpers ──
-
     def _is_controlled(self, pet: BattlePet) -> bool:
-        """Check if pet is fully disabled (cannot act at all)."""
         for s in pet.statuses:
             if s.type == "control" and s.control_type in ("stun", "freeze", "ice",
                                                            "imprison", "float", "fear"):
@@ -595,8 +499,6 @@ class BattleEngine:
             if s.type == "control" and s.control_type == ctype:
                 return True
         return False
-
-    # ── Buff/debuff getters ──
 
     def _get_buff(self, pet: BattlePet, buff_type: str) -> Optional[Status]:
         for s in pet.statuses:
@@ -622,55 +524,4 @@ class BattleEngine:
                 pet.statuses.remove(s)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Battle Report Formatting
-# ══════════════════════════════════════════════════════════════════════
-
-def format_battle_report(result: BattleResult) -> str:
-    """Generate a readable battle report."""
-    lines = ["⚔️ 战斗结束！"]
-    lines.append("━━━━━━━━━━━━━━━━━━")
-
-    if result.winner:
-        lines.append(f"🏆 胜利者：{result.winner_name}")
-        lines.append(f"💀 战败者：{result.loser_name}")
-    else:
-        lines.append("🤝 平局！双方势均力敌")
-
-    lines.append(f"⏱ 战斗时长：{result.duration} 秒")
-    lines.append("━━━━━━━━━━━━━━━━━━")
-    lines.append("📜 战斗日志：")
-
-    # Show last 10 events
-    recent = result.events[-10:] if len(result.events) > 10 else result.events
-    for ev in recent:
-        t = f"[{ev.time:.1f}s]"
-        if ev.type in ("attack", "damage"):
-            c = "💥" if ev.is_crit else "⚔️"
-            lines.append(f"  {t} {c} {ev.source} → {ev.target} {ev.detail} (-{ev.damage:.0f})")
-        elif ev.type == "skill":
-            lines.append(f"  {t} ✨ {ev.source} {ev.detail}")
-        elif ev.type == "dodge":
-            lines.append(f"  {t} 👻 {ev.detail}")
-        elif ev.type == "heal":
-            lines.append(f"  {t} 💚 {ev.source} {ev.detail}")
-        elif ev.type == "shield":
-            lines.append(f"  {t} 🛡️ {ev.source} {ev.detail}")
-        elif ev.type == "buff":
-            lines.append(f"  {t} ⬆️ {ev.source} {ev.detail}")
-        elif ev.type == "debuff":
-            lines.append(f"  {t} ⬇️ {ev.source} → {ev.target} {ev.detail}")
-        elif ev.type == "control":
-            lines.append(f"  {t} 🔒 {ev.source} → {ev.target} {ev.detail}")
-        elif ev.type == "dot":
-            lines.append(f"  {t} 🔥 {ev.detail} → {ev.target}")
-        elif ev.type == "reflect":
-            lines.append(f"  {t} 🔄 {ev.source} → {ev.target} {ev.detail}")
-        elif ev.type == "purify":
-            lines.append(f"  {t} 💫 {ev.source} {ev.detail}")
-
-    return "\n".join(lines)
-
-
-# Global engine instance
 battle_engine = BattleEngine()

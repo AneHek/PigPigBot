@@ -8,9 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.bot import QQBot
+from src.core.bot import QQBot
 from src.config import config
-from src.pet_game import game
+from src.game import game
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -21,7 +21,6 @@ logger = logging.getLogger("Main")
 
 
 def check_config():
-    """检查配置是否已填写"""
     bot_cfg = config.get("bot", {})
     secret_file = Path(__file__).parent / "bot_config.yaml"
 
@@ -44,7 +43,7 @@ async def main():
     check_config()
 
     bot = QQBot()
-    game.bot = bot  # 注入bot引用以支持截图生成
+    game.bot = bot
     try:
         await bot.start()
     except KeyboardInterrupt:
@@ -57,7 +56,6 @@ async def main():
 
 if __name__ == "__main__":
     if sys.platform == "win32":
-        # ProactorEventLoopPolicy 兼容 Playwright 的管道传输，同时 aiohttp 3.8+ 完全支持
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
     asyncio.run(main())

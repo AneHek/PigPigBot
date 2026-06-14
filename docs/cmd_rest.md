@@ -12,19 +12,19 @@
     ▼
 handler.py :: handle_message()
     │  parse_command("/休息") → cmd="休息", arg=""
-    │  handlers["休息"] → game.end_training(user_id)
+    │  get_handler("休息") → TrainingMixin.end_training  (装饰器注册)
     │
     ▼
-pet_game.py :: PetGame.end_training(user_id)
+game/training.py :: TrainingMixin.end_training(user_id, user_name, arg, group_id)
     │
     ├─ 1. self.dm.get_pet(user_id)
-    │     └─ 无宠物 → 返回错误
+    │     └─ data/pet_store.py → 无宠物 → 返回错误
     │
     ├─ 2. 训练状态检查
     │     └─ pet.training == False → 返回 "宠物不在训练中"
     │
     ├─ 3. self.dm.end_training(user_id)
-    │     └─ data_manager.py :: DataManager.end_training()
+    │     └─ data/pet_store.py :: PetStoreMixin.end_training()
     │        ├─ get_pet() → 获取 Pet
     │        ├─ 计算 elapsed = time.time() - pet.training_start
     │        ├─ minutes = int(elapsed / 60)
@@ -45,7 +45,7 @@ pet_game.py :: PetGame.end_training(user_id)
     ├─ 4. exp_gained == -1 → 返回 "还需要训练 X 分钟"
     │
     ├─ 5. self.dm.update_leaderboard(result)
-    │     └─ 刷新排行榜
+    │     └─ data/leaderboard.py → 刷新排行榜
     │
     ├─ 6. 构建回复信息
     │     ├─ title: "🛌 {species_name}({game_uid}) 训练结束"
@@ -55,8 +55,7 @@ pet_game.py :: PetGame.end_training(user_id)
     │     └─ 检测可进化: level 达到门槛 → 标题中追加 "可进化" 警告
     │
     ├─ 7. msg = await self._build_pet_message(result, title, tip, rows)
-    │     └─ title: "🛌 {species_name}({game_uid}) 训练结束"
-    │     └─ 调用 _generate_screenshot(result) 生成通用截图
+    │     └─ game/base.py → 调用 _generate_screenshot(result) 生成通用截图
     │     └─ 截图流程 → 详见 screenshot_flow.md
     │
     └─ 8. asyncio.create_task(self._pre_generate_screenshot(result))
@@ -69,12 +68,12 @@ pet_game.py :: PetGame.end_training(user_id)
 
 | 函数 | 文件 | 作用 |
 |------|------|------|
-| `get_pet()` | data_manager.py | 获取宠物数据 |
-| `end_training()` | data_manager.py | 结束训练、计算经验、发放经验 |
-| `add_exp()` | data_manager.py | 增加经验并处理升级 |
-| `update_pet()` | data_manager.py | 更新属性、升级循环、进化门槛 |
-| `calc_stats()` | pet_stats.py | 升级后重算战斗属性 |
-| `update_leaderboard()` | data_manager.py | 刷新排行榜 |
-| `_generate_screenshot()` | pet_game.py | 截图核心：缓存/渲染/截图/并发控制 |
-| `_pre_generate_screenshot()` | pet_game.py | 后台预生成通用截图 |
-| `_build_pet_message()` | pet_game.py | 调用截图核心 + 构建消息 |
+| `get_pet()` | data/pet_store.py | 获取宠物数据 |
+| `end_training()` | data/pet_store.py | 结束训练、计算经验、发放经验 |
+| `add_exp()` | data/pet_store.py | 增加经验并处理升级 |
+| `update_pet()` | data/pet_store.py | 更新属性、升级循环、进化门槛 |
+| `calc_stats()` | pet/stats.py | 升级后重算战斗属性 |
+| `update_leaderboard()` | data/leaderboard.py | 刷新排行榜 |
+| `_generate_screenshot()` | game/base.py | 截图核心：缓存/渲染/截图/并发控制 |
+| `_pre_generate_screenshot()` | game/base.py | 后台预生成通用截图 |
+| `_build_pet_message()` | game/base.py | 调用截图核心 + 构建消息 |
