@@ -33,12 +33,13 @@ class BattleEngine:
             max_duration: float = MAX_DURATION) -> BattleResult:
         a = self._create_battle_pet(pet_a_dict)
         b = self._create_battle_pet(pet_b_dict)
-        self._apply_passive_skills(a, pet_a_dict)
-        self._apply_passive_skills(b, pet_b_dict)
+        self._apply_modifiers(a, self._collect_battle_modifiers(pet_a_dict))
+        self._apply_modifiers(b, self._collect_battle_modifiers(pet_b_dict))
         events: list[BattleEvent] = []
         elapsed = 0.0
 
         a_adv = self._type_advantage(a.battle_type, b.battle_type)
+        b_adv = self._type_advantage(b.battle_type, a.battle_type)
 
         while elapsed < max_duration:
             a_controlled = self._is_controlled(a)
@@ -56,7 +57,7 @@ class BattleEngine:
             actions_a = self._process_pet(a, b, DT, a_controlled, a_silenced,
                                           a_disarmed, events, elapsed, a_adv)
             actions_b = self._process_pet(b, a, DT, b_controlled, b_silenced,
-                                          b_disarmed, events, elapsed, 1.0)
+                                          b_disarmed, events, elapsed, b_adv)
 
             if a.is_dead or b.is_dead:
                 break
@@ -124,46 +125,61 @@ class BattleEngine:
         )
         return bp
 
-    def _apply_passive_skills(self, bp: BattlePet, pet_dict: dict):
-        """Apply passive skill stat bonuses to a BattlePet."""
-        passive_slots = pet_dict.get("passive_slots", {})
-        if not passive_slots:
-            return
+    def _collect_battle_modifiers(self, pet_dict: dict) -> list[dict]:
+        """Collect all battle modifiers from pet dict.
 
-        from src.game.passive_config import PASSIVE_SKILLS
+        Modifiers are pre-computed by the game layer and stored in
+        pet_dict["modifiers"]. This method is engine-internal and
+        source-agnostic.
+        """
+        return pet_dict.get("modifiers", [])
 
-        for slot, skill_id in passive_slots.items():
-            if skill_id not in PASSIVE_SKILLS:
-                continue
-            info = PASSIVE_SKILLS[skill_id]
-            level = pet_dict.get("passive_levels", {}).get(skill_id, 0)
-            if level <= 0 or level > len(info["pct_per_level"]):
-                continue
-            pct = info["pct_per_level"][level - 1]
-            stat = info["stat"]
+    def _apply_modifiers(self, bp: BattlePet, modifiers: list[dict]):
+        """Apply a list of stat modifiers to a BattlePet.
+
+        Each modifier: {"stat": str, "value": float, "type": "pct"|"flat"}
+          - pct:  multiplicative → value *= (1 + value/100)
+          - flat: additive       → value += value
+
+        This method is source-agnostic: passives, equipment, potions,
+        or any future system all produce the same format.
+        """
+        for mod in modifiers:
+            stat = mod["stat"]
+            value = mod["value"]
+            mod_type = mod.get("type", "pct")
 
             if stat == "atk":
-                bp.atk *= (1 + pct / 100)
+                if mod_type == "pct":
+                    bp.atk *= (1 + value / 100)
+                else:
+                    bp.atk += value
             elif stat == "hp":
-                bonus = bp.max_hp * pct / 100
+                if mod_type == "pct":
+                    bonus = bp.max_hp * value / 100
+                else:
+                    bonus = value
                 bp.max_hp += bonus
                 bp.hp += bonus
             elif stat == "def":
-                bp.def_ *= (1 + pct / 100)
+                if mod_type == "pct":
+                    bp.def_ *= (1 + value / 100)
+                else:
+                    bp.def_ += value
             elif stat == "spd":
-                bp.spd *= (1 + pct / 100)
+                if mod_type == "pct":
+                    bp.spd *= (1 + value / 100)
+                else:
+                    bp.spd += value
                 bp.attack_interval = 1.0 / max(bp.spd, 0.1)
             elif stat == "crit":
-                bp.crit += pct
+                bp.crit += value
             elif stat == "crit_dmg":
-                bp.crit_dmg += pct / 100
+                bp.crit_dmg += value
             elif stat == "eva":
-                bp.eva += pct
+                bp.eva += value
             elif stat == "lifesteal":
-                bp.lifesteal += pct / 100
-            elif stat == "spd_flat":
-                bp.spd += pct
-                bp.attack_interval = 1.0 / max(bp.spd, 0.1)
+                bp.lifesteal += value
 
     def _type_advantage(self, atk_type: str, def_type: str) -> float:
         if COUNTER_MAP.get(atk_type) == def_type:
@@ -177,6 +193,12 @@ class BattleEngine:
                      events: list[BattleEvent], elapsed: float,
                      type_mult: float) -> bool:
         acted = False
+
+        confuse = self._get_confuse(pet)
+        if confuse and random.random() * 100 < confuse.confuse_chance:
+            events.append(BattleEvent(elapsed, "control", pet.name, pet.name,
+                                     "困惑中，无法行动"))
+            return False
 
         if pet.auto_skill_interval > 0:
             pet.auto_skill_timer += dt
@@ -330,11 +352,14 @@ class BattleEngine:
             else:
                 td_val = effect.value
             dmg, _, is_dodge = self._calc_damage(source, target, td_val, 1.0, True)
-            if not is_dodge:
-                target.hp -= td_val
+            if is_dodge:
+                events.append(BattleEvent(elapsed, "dodge", source.name,
+                                         target.name, "闪避了真实伤害！"))
+            else:
+                target.hp -= dmg
                 events.append(BattleEvent(elapsed, "damage", source.name,
-                                         target.name, f"真实伤害 {td_val:.0f}",
-                                         td_val))
+                                         target.name, f"真实伤害 {dmg:.0f}",
+                                         dmg))
 
         elif etype == "dot":
             if effect.dot_atk_pct > 0:
@@ -499,6 +524,12 @@ class BattleEngine:
             if s.type == "control" and s.control_type == ctype:
                 return True
         return False
+
+    def _get_confuse(self, pet: BattlePet) -> Optional[Status]:
+        for s in pet.statuses:
+            if s.type == "control" and s.control_type == "confuse":
+                return s
+        return None
 
     def _get_buff(self, pet: BattlePet, buff_type: str) -> Optional[Status]:
         for s in pet.statuses:

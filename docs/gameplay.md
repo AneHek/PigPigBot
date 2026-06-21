@@ -97,7 +97,17 @@ ENEMY_PASSIVES = {
 
 ## 五、战斗集成
 
-战斗前，`dungeon.py::_dungeon_fight()` 将敌方被动注入 `monster_dict`，玩家被动从 Redis 读取后注入 `pet_dict`，两者均通过 `battle_engine._apply_passive_skills()` 生效。
+所有战斗场景通过**统一修饰符系统**构建玩家战斗数据。详见 [battle_modifier_system.md](battle_modifier_system.md)。
+
+| 场景 | 调用位置 | 说明 |
+|------|---------|------|
+| PvP 战斗 | `game/pvp.py` | 双方均调用 `_build_battle_dict()` |
+| 世界 Boss | `game/boss.py` | 玩家调用 `_build_battle_dict()`，Boss 无修饰符 |
+| 副本战斗 | `game/dungeon.py` | 玩家调用 `_build_battle_dict()`，敌方被动由 `get_enemy_passives()` 注入 |
+
+`_build_battle_dict()` 通过 `_collect_passive_modifiers()` 将被动技能转换为统一修饰符列表，引擎层 `_apply_modifiers()` 统一应用。
+
+未来新增属性来源（装备、药剂等），只需在 `game/base.py` 增加一个 `_collect_xxx_modifiers()` 方法并注册到管线，**引擎层零修改**，所有战斗入口自动兼容。
 
 ## 六、战斗时长规则
 

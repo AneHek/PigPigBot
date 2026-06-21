@@ -154,15 +154,25 @@ class DungeonMixin:
         enemy_passives = get_enemy_passives(ch, stage_id)
         if enemy_passives:
             monster_dict.update(enemy_passives)
+            from src.game.passive_config import PASSIVE_SKILLS
+            enemy_modifiers = []
+            for slot, skill_id in enemy_passives.get("passive_slots", {}).items():
+                if skill_id not in PASSIVE_SKILLS:
+                    continue
+                info = PASSIVE_SKILLS[skill_id]
+                level = enemy_passives.get("passive_levels", {}).get(skill_id, 0)
+                if level <= 0 or level > len(info["pct_per_level"]):
+                    continue
+                pct = info["pct_per_level"][level - 1]
+                stat = info["stat"]
+                if stat in ("crit_dmg", "lifesteal"):
+                    enemy_modifiers.append({"stat": stat, "value": pct / 100, "type": "flat"})
+                else:
+                    enemy_modifiers.append({"stat": stat, "value": pct, "type": "pct"})
+            if enemy_modifiers:
+                monster_dict["modifiers"] = enemy_modifiers
 
-        pet_dict = pet.to_dict()
-        passive_slots = self.dm.get_passive_slots(user_id)
-        if passive_slots:
-            pet_dict["passive_slots"] = passive_slots
-            pet_dict["passive_levels"] = {
-                sid: self.dm.get_passive_level(user_id, sid)
-                for sid in passive_slots.values()
-            }
+        pet_dict = self._build_battle_dict(user_id, pet)
 
         start_msg = f"⚔️ 挑战 {ch_info['name']} {ch}-{stage_id} {stage_info['name']}\n对手：{monster_name} Lv.{level}\n战斗开始..."
 

@@ -25,7 +25,7 @@
 | `src/pet/` | 宠物领域。`config.py`（25 种族 + 技能）、`stats.py`（IV + 属性公式 + CP） |
 | `src/game/` | 游戏命令。`commands.py`（装饰器注册中心）、`base.py`（截图辅助）、各命令 Mixin 文件 |
 | `src/battle/` | 战斗引擎。`models.py`（数据模型）、`engine.py`（引擎 + 常量）、`report.py`（战报格式化） |
-| `src/data/` | 数据持久化。`models.py`（Pet + Redis）、各 Mixin 文件（pet_store / economy / energy / dungeon / boss / social / checkin / leaderboard / group） |
+| `src/data/` | 数据持久化。`models.py`（Pet + Redis）、各 Mixin 文件（pet_store / economy / energy / dungeon / boss / social / checkin / leaderboard / group / passive_store） |
 | `src/screenshot/` | 截图系统。`render.py`（HTML 模板 + Playwright）、`lifecycle.py`（UUID + 清理） |
 
 ## 三、信息处理前置流程
@@ -187,6 +187,23 @@ python main.py
 
 - 副本 1（萌新猪舍）：敌方无被动
 - 副本 2~7：敌方根据章节等级递增被动数量与等级，BOSS 关额外强化
+
+## 六.一、统一战斗修饰符系统
+
+所有战斗场景（PvP / Boss / 副本）通过统一修饰符系统构建玩家战斗数据。详见 [battle_modifier_system.md](battle_modifier_system.md)。
+
+```
+game/base.py :: _build_battle_dict()
+    ├─ _collect_passive_modifiers()    ← 被动技能
+    ├─ _collect_equipment_modifiers()  ← 装备（未来）
+    └─ _collect_potion_modifiers()     ← 药剂（未来）
+        ↓
+    d["modifiers"] = [{"stat":"atk","value":5.4,"type":"pct"}, ...]
+        ↓
+battle/engine.py :: _apply_modifiers()  ← 来源无关，统一应用
+```
+
+新增属性来源（装备、药剂等）只需在 `game/base.py` 增加一个收集方法，**引擎层零修改**。
 
 ## 七、浏览器截图流程
 

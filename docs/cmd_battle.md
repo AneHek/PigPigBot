@@ -58,10 +58,20 @@ game/pvp.py :: PvPMixin.battle_pvp(user_id, user_name, arg, group_id)
     ├─ 3. 构建开始消息
     │     └─ start_msg = "⚔️ {pet_a.species_name}「{pet_a.name}」 VS ..."
     │
-    ├─ 4. battle_engine.run(pet_a.to_dict(), pet_b.to_dict())
+    ├─ 4. 构建战斗数据（含被动注入）
+    │     ├─ self._build_battle_dict(challenger_id, pet_a)
+    │     │   └─ game/base.py :: PetGameBase._build_battle_dict()
+    │     │       ├─ self.dm.get_passive_slots(user_id) → 被动槽位
+    │     │       ├─ self.dm.get_passive_level(user_id, sid) → 各技能等级
+    │     │       └─ pet.with_passives(slots, levels) → 合并到 dict
+    │     └─ self._build_battle_dict(target_id, pet_b) → 同上
+    │
+    ├─ 5. battle_engine.run(pet_a_dict, pet_b_dict)
     │     └─ battle/engine.py :: BattleEngine.run()
     │        ├─ _create_battle_pet() × 2
     │        │   └─ 初始化技能冷却：所有技能初始 CD = skill.cd（全部进入冷却）
+    │        ├─ _apply_passive_skills() × 2
+    │        │   └─ 读取 passive_slots/passive_levels → 叠加属性加成
     │        ├─ _type_advantage() → 克制环
     │        └─ 主循环 (elapsed < 60s, DT=0.1s)
     │              ├─ 控制状态检查
@@ -76,16 +86,16 @@ game/pvp.py :: PvPMixin.battle_pvp(user_id, user_name, arg, group_id)
     │              ├─ _process_pet(b) → 技能轮换 + 普攻
     │              └─ 死亡检查 → 任一方 HP<=0 则跳出
     │
-    ├─ 5. 经验发放
+    ├─ 6. 经验发放
     │     ├─ 胜方: exp = 50 * pet_a.level
     │     ├─ 败方: exp = 20 * pet_a.level
     │     └─ self.dm.update_leaderboard() × 2
     │
-    ├─ 6. 构建结果消息
+    ├─ 7. 构建结果消息
     │     └─ result_msg = format_battle_report(result)
     │         └─ battle/report.py
     │
-    └─ 7. 返回 [start_msg, result_msg]
+    └─ 8. 返回 [start_msg, result_msg]
           └─ core/bot.py 收到 list → 分两次发送，间隔 1s
               ├─ 第 1 次 POST: {content: start_msg, msg_seq: 1}
               ├─ sleep(1)
@@ -141,8 +151,14 @@ game/pvp.py :: PvPMixin.battle_pvp(user_id, user_name, arg, group_id)
 | `get_user_by_game_uid()` | data/group.py | 通过游戏用户ID反查QQ用户ID |
 | `get_pet()` | data/pet_store.py | 获取双方宠物数据 |
 | `battle_pvp()` | game/pvp.py | 异步战斗：返回 [开始消息, 结果消息] |
+| `_build_battle_dict()` | game/base.py | 构建战斗用 dict（修饰符收集管线） |
+| `_collect_passive_modifiers()` | game/base.py | 被动技能 → 修饰符列表 |
+| `get_passive_slots()` | data/passive_store.py | 获取玩家已装备被动槽位 |
+| `get_passive_level()` | data/passive_store.py | 获取被动技能等级 |
 | `BattleEngine.run()` | battle/engine.py | 运行完整战斗模拟 |
 | `_create_battle_pet()` | battle/engine.py | 从 Pet dict 创建战斗快照 |
+| `_collect_battle_modifiers()` | battle/engine.py | 从 dict 提取修饰符列表 |
+| `_apply_modifiers()` | battle/engine.py | 通用属性加成应用（来源无关） |
 | `_type_advantage()` | battle/engine.py | 计算类型克制系数 |
 | `_process_pet()` | battle/engine.py | 处理单个宠物每 tick 的行动 |
 | `_execute_skill()` | battle/engine.py | 执行技能 |

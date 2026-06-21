@@ -67,11 +67,12 @@ game/dungeon.py :: DungeonMixin.dungeon(user_id, user_name, arg, group_id)
         │     └─ [Ch≥2] get_enemy_passives(ch, stage_id) → 注入 passive_slots/passive_levels
         │         └─ game/dungeon_config.py → ENEMY_PASSIVES 查表
         │
-        ├─ 8b. 注入玩家被动
-        │     ├─ passive_slots = self.dm.get_passive_slots(user_id)
-        │     │   └─ data/passive_store.py → Redis HGETALL qqbot:passive:{user_id}:slots
-        │     ├─ [有装备] pet_dict["passive_slots"] = passive_slots
-        │     └─ [有装备] pet_dict["passive_levels"] = {sid: get_passive_level(user_id, sid)}
+        ├─ 8b. 构建玩家战斗数据（含被动注入）
+        │     └─ pet_dict = self._build_battle_dict(user_id, pet)
+        │         └─ game/base.py :: PetGameBase._build_battle_dict()
+        │             ├─ self.dm.get_passive_slots(user_id) → 被动槽位
+        │             ├─ self.dm.get_passive_level(user_id, sid) → 各技能等级
+        │             └─ pet.with_passives(slots, levels) → 合并到 dict
         │
         ├─ 9. 执行战斗
         │     ├─ start_msg = "⚔️ 挑战 {chapter_name} {ch}-{stage_id} ..."
@@ -168,7 +169,11 @@ game/dungeon.py :: DungeonMixin.dungeon_reset(user_id, user_name, arg, group_id)
 | `add_gold()` | data/economy.py | 增加金币 |
 | `add_item()` | data/economy.py | 增加物品 |
 | `calc_stats()` | pet/stats.py | 生成怪物属性 |
-| `BattleEngine.run()` | battle/engine.py | 运行 30 秒战斗模拟 |
+| `_build_battle_dict()` | game/base.py | 构建战斗用 dict（修饰符收集管线） |
+| `_collect_passive_modifiers()` | game/base.py | 被动技能 → 修饰符列表 |
+| `BattleEngine.run()` | battle/engine.py | 运行 120 秒战斗模拟（含修饰符加成） |
+| `_collect_battle_modifiers()` | battle/engine.py | 从 dict 提取修饰符列表 |
+| `_apply_modifiers()` | battle/engine.py | 通用属性加成应用（来源无关） |
 | `is_chapter_unlocked()` | game/dungeon_config.py | 判断章节是否解锁 |
 | `get_stage_id()` | game/dungeon_config.py | 关卡字符串 → stage_id |
 | `get_enemy_passives()` | game/dungeon_config.py | 获取敌方被动配置（Ch1 无，Ch2+ 有） |

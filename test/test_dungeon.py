@@ -296,9 +296,10 @@ class TestDungeonPlayerPassives(DungeonTestBase):
 
         call_args = mock_engine.run.call_args
         pet_dict = call_args[0][0]
-        self.assertIn("passive_slots", pet_dict)
-        self.assertEqual(pet_dict["passive_slots"]["1"], "PS_A01")
-        self.assertEqual(pet_dict["passive_levels"]["PS_A01"], 3)
+        self.assertIn("modifiers", pet_dict)
+        atk_mod = next(m for m in pet_dict["modifiers"] if m["stat"] == "atk")
+        self.assertEqual(atk_mod["type"], "pct")
+        self.assertGreater(atk_mod["value"], 0)
 
     @patch("src.game.dungeon.battle_engine")
     def test_player_no_passives_no_key(self, mock_engine):
@@ -309,7 +310,7 @@ class TestDungeonPlayerPassives(DungeonTestBase):
 
         call_args = mock_engine.run.call_args
         pet_dict = call_args[0][0]
-        self.assertNotIn("passive_slots", pet_dict)
+        self.assertNotIn("modifiers", pet_dict)
 
     @patch("src.game.dungeon.battle_engine")
     def test_player_multiple_passives(self, mock_engine):
@@ -325,9 +326,11 @@ class TestDungeonPlayerPassives(DungeonTestBase):
 
         call_args = mock_engine.run.call_args
         pet_dict = call_args[0][0]
-        self.assertEqual(len(pet_dict["passive_slots"]), 2)
-        self.assertEqual(pet_dict["passive_levels"]["PS_A01"], 5)
-        self.assertEqual(pet_dict["passive_levels"]["PS_D01"], 3)
+        self.assertIn("modifiers", pet_dict)
+        self.assertEqual(len(pet_dict["modifiers"]), 2)
+        stats = {m["stat"] for m in pet_dict["modifiers"]}
+        self.assertIn("atk", stats)
+        self.assertIn("hp", stats)
 
 
 class TestDungeonPassiveDrops(DungeonTestBase):

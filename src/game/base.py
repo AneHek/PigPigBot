@@ -14,6 +14,33 @@ class PetGameBase:
         self.dm = dm
         self.bot = bot
 
+    def _build_battle_dict(self, user_id: str, pet: Pet) -> dict:
+        d = pet.to_dict()
+        modifiers = []
+        modifiers.extend(self._collect_passive_modifiers(user_id))
+        if modifiers:
+            d["modifiers"] = modifiers
+        return d
+
+    def _collect_passive_modifiers(self, user_id: str) -> list[dict]:
+        from src.game.passive_config import PASSIVE_SKILLS
+        modifiers = []
+        slots = self.dm.get_passive_slots(user_id)
+        for slot, skill_id in slots.items():
+            if skill_id not in PASSIVE_SKILLS:
+                continue
+            info = PASSIVE_SKILLS[skill_id]
+            level = self.dm.get_passive_level(user_id, skill_id)
+            if level <= 0 or level > len(info["pct_per_level"]):
+                continue
+            pct = info["pct_per_level"][level - 1]
+            stat = info["stat"]
+            if stat in ("crit_dmg", "lifesteal"):
+                modifiers.append({"stat": stat, "value": pct / 100, "type": "flat"})
+            else:
+                modifiers.append({"stat": stat, "value": pct, "type": "pct"})
+        return modifiers
+
     async def _generate_screenshot(self, pet: Pet,
                                     old_pet: Pet = None) -> str | None:
         import base64

@@ -111,15 +111,19 @@ class BossMixin:
             "evolution_stage": info["stage"],
             "battle_type": PET_SPECIES[info["species_id"]]["battle_type"],
             "level": info["min_level"],
-            "hp": min(hp, monster_stats["hp"]),
             **monster_stats,
         }
+        monster_dict["hp"] = min(hp, monster_stats["hp"])
 
         start_msg = f"⚔️ 你对 {info['name']} 发起了攻击！\n战斗进行中..."
 
         self.dm.set_cooldown(user_id, cd_key, BOSS_ATTACK_CD)
 
-        result = battle_engine.run(pet.to_dict(), monster_dict, max_duration=BOSS_BATTLE_DURATION)
+        result = battle_engine.run(
+            self._build_battle_dict(user_id, pet),
+            monster_dict,
+            max_duration=BOSS_BATTLE_DURATION,
+        )
 
         total_damage = sum(ev.damage for ev in result.events if ev.source == pet.name and ev.type in ("attack", "damage"))
 

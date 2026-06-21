@@ -103,6 +103,14 @@ class Pet:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    def with_passives(self, passive_slots: dict[str, str] | None = None,
+                      passive_levels: dict[str, int] | None = None) -> dict:
+        d = self.to_dict()
+        if passive_slots:
+            d["passive_slots"] = passive_slots
+            d["passive_levels"] = passive_levels or {}
+        return d
+
     @classmethod
     def from_dict(cls, data: dict) -> "Pet":
         known = {f.name for f in cls.__dataclass_fields__.values()}

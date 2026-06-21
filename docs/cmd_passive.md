@@ -64,15 +64,23 @@ game/passive.py :: PassiveMixin.passive_cmd(user_id, user_name, arg, group_id)
 
 ## 被动技能战斗接入
 
+被动数据通过**统一修饰符系统**接入战斗。详见 [battle_modifier_system.md](battle_modifier_system.md)。
+
 ```
-battle/engine.py :: BattleEngine.run()
+game/base.py :: _build_battle_dict(user_id, pet)
     │
-    ├─ _create_battle_pet() 创建 BattlePet
-    ├─ _apply_passive_skills() 叠加被动技能属性加成
-    │   ├─ 读取 pet_dict["passive_slots"] 和 pet_dict["passive_levels"]
-    │   ├─ 查询 PASSIVE_SKILLS 配置表获取百分比值
-    │   └─ 按 stat 类型叠加到对应属性（ATK/HP/DEF/SPD/CRIT/EVA 等）
-    └─ 进入正常战斗循环
+    ├─ _collect_passive_modifiers(user_id)
+    │   ├─ self.dm.get_passive_slots(user_id)
+    │   ├─ self.dm.get_passive_level(user_id, sid)
+    │   └─ 产出修饰符列表: [{"stat":"atk","value":5.4,"type":"pct"}, ...]
+    │
+    └─ d["modifiers"] = [...]
+
+↓ 战斗引擎统一处理（来源无关）↓
+
+battle/engine.py :: BattleEngine.run()
+    ├─ _collect_battle_modifiers(dict) → modifiers[]
+    └─ _apply_modifiers(bp, modifiers) → 属性加成
 ```
 
 ## 副本掉落被动技能书
@@ -92,6 +100,9 @@ game/dungeon.py :: _dungeon_fight()
 | 函数 | 文件 | 作用 |
 |------|------|------|
 | `passive_cmd()` | game/passive.py | 被动技能命令入口 |
+| `_build_battle_dict()` | game/base.py | 集中化战斗数据构建（修饰符收集管线） |
+| `_collect_passive_modifiers()` | game/base.py | 被动技能 → 修饰符列表 |
+| `_apply_modifiers()` | battle/engine.py | 通用属性加成应用（来源无关） |
 | `get_passive_slots()` | data/passive_store.py | 获取 4 个槽位装备 |
 | `get_passive_level()` | data/passive_store.py | 获取技能等级 |
 | `get_all_passive_bags()` | data/passive_store.py | 获取所有技能书库存 |

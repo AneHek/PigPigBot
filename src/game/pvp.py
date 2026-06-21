@@ -35,7 +35,10 @@ class PvPMixin:
 
         start_msg = f"⚔️ {pet_a.species_name}「{pet_a.name}」 VS {pet_b.species_name}「{pet_b.name}」\n战斗开始，结果生成中..."
 
-        result = battle_engine.run(pet_a.to_dict(), pet_b.to_dict())
+        result = battle_engine.run(
+            self._build_battle_dict(challenger_id, pet_a),
+            self._build_battle_dict(target_id, pet_b),
+        )
 
         exp_winner = 50 * pet_a.level if result.winner else 0
         exp_loser = 20 * pet_a.level

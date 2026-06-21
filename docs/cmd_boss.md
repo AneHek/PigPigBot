@@ -62,24 +62,31 @@ game/boss.py :: BossMixin.boss(user_id, user_name, arg, group_id)
         │     │   └─ pet/stats.py → 属性公式计算
         │     └─ monster_dict = {owner_id: "boss", name, hp: min(hp, max_hp), ...}
         │
-        ├─ 9. 设置冷却 + 执行战斗
+        ├─ 9. 设置冷却 + 构建战斗数据（含被动注入）
         │     ├─ self.dm.set_cooldown(user_id, cd_key, 10)
-        │     └─ result = battle_engine.run(pet.to_dict(), monster_dict, max_duration=30)
-        │         └─ battle/engine.py → 30 秒实时战斗模拟
+        │     └─ pet_dict = self._build_battle_dict(user_id, pet)
+        │         └─ game/base.py :: PetGameBase._build_battle_dict()
+        │             ├─ self.dm.get_passive_slots(user_id) → 被动槽位
+        │             ├─ self.dm.get_passive_level(user_id, sid) → 各技能等级
+        │             └─ pet.with_passives(slots, levels) → 合并到 dict
         │
-        ├─ 10. 伤害统计
+        ├─ 10. 执行战斗
+        │     └─ result = battle_engine.run(pet_dict, monster_dict, max_duration=30)
+        │         └─ battle/engine.py → 30 秒实时战斗模拟（含被动加成）
+        │
+        ├─ 11. 伤害统计
         │     ├─ total_damage = sum(ev.damage for ev in result.events if ev.source == pet.name)
         │     ├─ self.dm.add_boss_damage(boss_id, user_id, total_damage)
         │     │   └─ data/boss_store.py → Redis ZINCRBY qqbot:boss:{boss_id}:{date}:dmg
         │     └─ new_hp = self.dm.decr_boss_hp(boss_id, total_damage)
         │         └─ data/boss_store.py → Redis DECRBY qqbot:boss:{boss_id}:{date}:hp
         │
-        ├─ 11. 排名计算
+        ├─ 12. 排名计算
         │     ├─ rank = self.dm.get_boss_rank(boss_id)
         │     │   └─ data/boss_store.py → Redis ZREVRANGE qqbot:boss:{boss_id}:{date}:dmg
         │     └─ user_rank = next((i+1 for i, (uid, _) in enumerate(rank) if uid == user_id))
         │
-        └─ 12. 构建回复
+        └─ 13. 构建回复
               ├─ start_msg = "⚔️ 你对 {boss_name} 发起了攻击！"
               ├─ result_msg = 本次伤害 + 剩余 HP + 排名 + 行动力
               └─ [Boss 被击杀] self.dm.set_boss_last_kill(boss_id, user_id)
@@ -168,5 +175,11 @@ game/boss.py :: BossMixin._boss_claim(user_id, group_id)
 | `set_boss_last_kill()` | data/boss_store.py | 记录最后一击 |
 | `add_exp()` | data/pet_store.py | 增加经验并处理升级 |
 | `calc_stats()` | pet/stats.py | 生成 Boss 属性 |
-| `BattleEngine.run()` | battle/engine.py | 运行 30 秒战斗模拟 |
+| `_build_battle_dict()` | game/base.py | 构建战斗用 dict（修饰符收集管线） |
+| `_collect_passive_modifiers()` | game/base.py | 被动技能 → 修饰符列表 |
+| `get_passive_slots()` | data/passive_store.py | 获取玩家已装备被动槽位 |
+| `get_passive_level()` | data/passive_store.py | 获取被动技能等级 |
+| `BattleEngine.run()` | battle/engine.py | 运行 30 秒战斗模拟（含修饰符加成） |
+| `_collect_battle_modifiers()` | battle/engine.py | 从 dict 提取修饰符列表 |
+| `_apply_modifiers()` | battle/engine.py | 通用属性加成应用（来源无关） |
 | `get_active_boss()` | game/boss_config.py | 根据时间判断活跃 Boss |
